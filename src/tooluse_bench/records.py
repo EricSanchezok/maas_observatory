@@ -122,6 +122,21 @@ class RunCompletion(StrictModel):
     complete: Literal[True] = True
 
 
+class ExecutionAudit(StrictModel):
+    """Safe, releaseable execution controls and adapter-level observations."""
+
+    schema_version: Literal[1] = 1
+    run_id: str
+    benchmark_id: str
+    deployment_id: str
+    lane: Lane
+    trial: int = Field(ge=1)
+    started_at: datetime
+    finished_at: datetime
+    resource_controls: dict[str, str | int | float | bool | None]
+    observations: dict[str, str | int | float | bool | None]
+
+
 def result_from_spec(
     spec: RunSpec,
     *,

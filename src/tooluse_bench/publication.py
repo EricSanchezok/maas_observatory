@@ -15,7 +15,7 @@ from tooluse_bench.config import PROJECT_ROOT, load_model_catalog
 from tooluse_bench.domain import StrictModel
 from tooluse_bench.records import RunCompletion, RunManifest
 from tooluse_bench.redaction import Redactor
-from tooluse_bench.release import EXPECTED_RELEASE_FILES, ReleaseMetadata
+from tooluse_bench.release import ReleaseMetadata, release_file_inventory
 from tooluse_bench.reporting import AggregateResult
 from tooluse_bench.store import sha256_file
 
@@ -146,8 +146,12 @@ def validate_public_snapshot(
     if expected != actual:
         raise ValueError("public snapshot checksums do not match")
 
+    release = ReleaseMetadata.model_validate(
+        _load_json(directory / "release-metadata.json")
+    )
+    release_files = release_file_inventory(release.schema_version)
     release_checksums = _load_checksums(directory / "release-checksums.sha256")
-    if set(release_checksums) != EXPECTED_RELEASE_FILES - {"checksums.sha256"}:
+    if set(release_checksums) != release_files - {"checksums.sha256"}:
         raise ValueError("source release checksum inventory does not match files")
     release_sources = {
         "completion.json": "completion.json",
@@ -164,9 +168,6 @@ def validate_public_snapshot(
 
     manifest = RunManifest.model_validate(_load_json(directory / "manifest.json"))
     completion = RunCompletion.model_validate(_load_json(directory / "completion.json"))
-    release = ReleaseMetadata.model_validate(
-        _load_json(directory / "release-metadata.json")
-    )
     snapshot = PublicSnapshotMetadata.model_validate(
         _load_json(directory / "snapshot.json")
     )
@@ -207,7 +208,7 @@ def validate_public_snapshot(
         raise ValueError("public snapshot run IDs do not match")
     if release.git_commit != manifest.git_commit:
         raise ValueError("public snapshot Git commits do not match")
-    if set(release.files) != EXPECTED_RELEASE_FILES:
+    if set(release.files) != release_files:
         raise ValueError("public snapshot release file inventory does not match")
     release_created_at = datetime.fromisoformat(release.created_at)
     if (

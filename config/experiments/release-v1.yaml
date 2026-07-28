@@ -18,11 +18,11 @@ benchmarks:
     trials: 1
     options:
       backend: evalscope
-      batch_size: 10
+      batch_size: 25
       sdk_max_retries: 2
       request_timeout_seconds: 180
       temperature: 0
-      timeout_seconds: 43200
+      timeout_seconds: 172800
   - benchmark_id: toolathlon-verified
     profile: official
     trials: 3

@@ -18,6 +18,7 @@ from tooluse_bench.domain import BenchmarkSelection, ModelDeployment
 from tooluse_bench.records import (
     BenchmarkMetadata,
     ErrorCategory,
+    ExecutionAudit,
     TaskResult,
     TaskStatus,
     ValidationIssue,
@@ -138,14 +139,17 @@ class BFCLAdapter(BenchmarkAdapter):
         limit = context.selection.options.get("limit")
         if limit is None and context.selection.profile == "smoke":
             limit = 10
+        batch_size = int(context.selection.options.get("batch_size", 1))
+        sdk_max_retries = int(context.selection.options.get("sdk_max_retries", 2))
+        request_timeout_seconds = float(
+            context.selection.options.get("request_timeout_seconds", 180)
+        )
         spec = {
             "model_id": context.deployment.model_id,
             "subsets": list(PROFILE_SUBSETS[context.selection.profile]),
-            "batch_size": int(context.selection.options.get("batch_size", 1)),
-            "sdk_max_retries": int(context.selection.options.get("sdk_max_retries", 2)),
-            "request_timeout_seconds": float(
-                context.selection.options.get("request_timeout_seconds", 180)
-            ),
+            "batch_size": batch_size,
+            "sdk_max_retries": sdk_max_retries,
+            "request_timeout_seconds": request_timeout_seconds,
             "limit": limit,
             "generation_config": {
                 "temperature": float(context.selection.options.get("temperature", 0)),
@@ -165,6 +169,9 @@ class BFCLAdapter(BenchmarkAdapter):
         }
         if serpapi_key := os.getenv("SERPAPI_API_KEY"):
             environment_values["SERPAPI_API_KEY"] = serpapi_key
+        process_timeout_seconds = float(
+            context.selection.options.get("timeout_seconds", 21600)
+        )
         started_at = datetime.now(UTC)
         outcome = run_logged_command(
             [
@@ -179,14 +186,39 @@ class BFCLAdapter(BenchmarkAdapter):
             ],
             cwd=context.workspace,
             environment=isolated_environment(environment_values),
-            timeout_seconds=float(
-                context.selection.options.get("timeout_seconds", 21600)
-            ),
+            timeout_seconds=process_timeout_seconds,
         )
         finished_at = datetime.now(UTC)
+        stderr_text = outcome.stderr_path.read_text(encoding="utf-8", errors="replace")
+        audit_path = context.workspace / "execution-audit.json"
+        audit = ExecutionAudit(
+            run_id=context.spec.run_id,
+            benchmark_id=context.spec.benchmark_id,
+            deployment_id=context.spec.deployment_id,
+            lane=context.spec.lane,
+            trial=context.spec.trial,
+            started_at=started_at,
+            finished_at=finished_at,
+            resource_controls={
+                "batch_size": batch_size,
+                "request_timeout_seconds": request_timeout_seconds,
+                "sdk_max_retries": sdk_max_retries,
+                "process_timeout_seconds": process_timeout_seconds,
+            },
+            observations={
+                "process_return_code": outcome.return_code,
+                "process_wall_seconds": outcome.wall_seconds,
+                "observed_sdk_retry_log_count": stderr_text.count("Retrying request"),
+            },
+        )
+        audit_path.write_text(
+            json.dumps(audit.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         artifacts = (
             str(outcome.stdout_path.relative_to(context.workspace)),
             str(outcome.stderr_path.relative_to(context.workspace)),
+            str(audit_path.relative_to(context.workspace)),
         )
         normalized_path = output_root / "adapter-results.jsonl"
         error_path = output_root / "adapter-errors.jsonl"

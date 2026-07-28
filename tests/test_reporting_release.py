@@ -22,13 +22,18 @@ from tooluse_bench.domain import Lane
 from tooluse_bench.records import (
     BenchmarkMetadata,
     ErrorCategory,
+    ExecutionAudit,
     RunManifest,
     RunSpec,
     TaskStatus,
     result_from_spec,
 )
 from tooluse_bench.redaction import Redactor
-from tooluse_bench.release import build_release, validate_release
+from tooluse_bench.release import (
+    build_release,
+    release_file_inventory,
+    validate_release,
+)
 from tooluse_bench.reporting import aggregate_results, build_report, load_results
 from tooluse_bench.store import RunStore, sha256_file
 
@@ -135,6 +140,23 @@ def make_result(
 
 def create_completed_run(run_directory: Path, *, secret: str = "") -> None:
     store = RunStore.create(run_directory, make_manifest(run_directory))
+    audit = ExecutionAudit(
+        run_id=RUN_ID,
+        benchmark_id="probe",
+        deployment_id=DEPLOYMENT_ID,
+        lane=Lane.STANDARDIZED,
+        trial=1,
+        started_at=datetime(2026, 7, 28, tzinfo=UTC),
+        finished_at=datetime(2026, 7, 28, tzinfo=UTC),
+        resource_controls={"max_retries": 2, "request_timeout_seconds": 90},
+        observations={"note": secret or "no retries", "observed_retry_count": 0},
+    )
+    audit_path = run_directory / "artifacts" / "probe" / "execution-audit.json"
+    audit_path.parent.mkdir(parents=True)
+    audit_path.write_text(
+        json.dumps(audit.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     statuses = {
         "task-a": (TaskStatus.PASS, TaskStatus.FAIL, TaskStatus.PASS),
         "task-b": (TaskStatus.ERROR, TaskStatus.FAIL, TaskStatus.FAIL),
@@ -241,9 +263,29 @@ def test_report_and_release_are_valid_sanitized_and_deterministic(
     assert secret not in released_results
     assert "private-endpoint.invalid" not in released_results
     assert "[REDACTED]" in released_results
+    released_audits = (release_one / "execution-audits.json").read_text()
+    assert secret not in released_audits
+    assert "[REDACTED]" in released_audits
+    assert json.loads(released_audits)[0]["resource_controls"] == {
+        "max_retries": 2,
+        "request_timeout_seconds": 90,
+    }
 
     metadata = json.loads((release_one / "release-metadata.json").read_text())
+    assert metadata["schema_version"] == 2
     assert metadata["source_results_sha256"] != metadata["published_results_sha256"]
+
+
+def test_release_rejects_execution_audit_with_wrong_run_id(tmp_path: Path) -> None:
+    run_directory = tmp_path / "private" / RUN_ID
+    create_completed_run(run_directory)
+    audit_path = next(run_directory.glob("artifacts/**/execution-audit.json"))
+    payload = json.loads(audit_path.read_text())
+    payload["run_id"] = "wrong-run"
+    audit_path.write_text(json.dumps(payload), encoding="utf-8")
+    build_report(run_directory, baselines=baseline_registry())
+    with pytest.raises(ValueError, match="execution audit run_id"):
+        build_release(run_directory, output_root=tmp_path / "release")
 
 
 def test_release_validation_detects_tampering(tmp_path: Path) -> None:
@@ -257,6 +299,11 @@ def test_release_validation_detects_tampering(tmp_path: Path) -> None:
     (release_directory / "report.md").write_text("tampered", encoding="utf-8")
     with pytest.raises(ValueError, match="checksums"):
         validate_release(release_directory)
+
+
+def test_release_file_inventory_rejects_unknown_schema_version() -> None:
+    with pytest.raises(ValueError, match="unsupported release schema version"):
+        release_file_inventory(99)
 
 
 def test_report_rejects_incomplete_and_tampered_runs(tmp_path: Path) -> None:

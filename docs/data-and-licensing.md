@@ -9,8 +9,9 @@ licenses and terms. A result bundle does not redistribute an upstream dataset
 unless that redistribution is separately permitted.
 
 Public bundles contain sanitized task trajectories, aggregates, provenance,
-checksums, and the data license. Private URLs, keys, authorization headers,
-local user paths, and unpublished raw run directories are excluded.
+execution audits, checksums, and the data license. Private URLs, keys,
+authorization headers, local user paths, and unpublished raw run directories
+are excluded.
 
 When reusing a result, cite the project, release tag, run ID, archive checksum,
 benchmark release, and access date. Do not remove provenance or imply that a

@@ -20,6 +20,7 @@ from tooluse_bench.domain import BenchmarkSelection, Lane, ModelDeployment
 from tooluse_bench.records import (
     BenchmarkMetadata,
     ErrorCategory,
+    ExecutionAudit,
     TaskResult,
     TaskStatus,
     ValidationIssue,
@@ -224,6 +225,9 @@ class ToolathlonAdapter(BenchmarkAdapter):
         }
         if task_list_path is not None:
             environment_values["TOOLATHLON_TASK_LIST_FILE"] = str(task_list_path)
+        process_timeout_seconds = float(
+            context.selection.options.get("timeout_seconds", 21600)
+        )
         started_at = datetime.now(UTC)
         outcome = run_logged_command(
             [
@@ -237,16 +241,39 @@ class ToolathlonAdapter(BenchmarkAdapter):
             ],
             cwd=context.workspace,
             environment=isolated_environment(environment_values),
-            timeout_seconds=float(
-                context.selection.options.get("timeout_seconds", 21600)
-            ),
+            timeout_seconds=process_timeout_seconds,
         )
         finished_at = datetime.now(UTC)
+        upstream_results = _find_eval_results(output_root)
+        audit_path = context.workspace / "execution-audit.json"
+        audit = ExecutionAudit(
+            run_id=context.spec.run_id,
+            benchmark_id=context.spec.benchmark_id,
+            deployment_id=context.spec.deployment_id,
+            lane=context.spec.lane,
+            trial=context.spec.trial,
+            started_at=started_at,
+            finished_at=finished_at,
+            resource_controls={
+                "backend": backend,
+                "workers": int(context.selection.options.get("workers", 10)),
+                "process_timeout_seconds": process_timeout_seconds,
+            },
+            observations={
+                "process_return_code": outcome.return_code,
+                "process_wall_seconds": outcome.wall_seconds,
+                "discovered_task_result_count": len(upstream_results),
+            },
+        )
+        audit_path.write_text(
+            json.dumps(audit.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         common_artifacts = (
             str(outcome.stdout_path.relative_to(context.workspace)),
             str(outcome.stderr_path.relative_to(context.workspace)),
+            str(audit_path.relative_to(context.workspace)),
         )
-        upstream_results = _find_eval_results(output_root)
         if outcome.return_code != 0 and not upstream_results:
             category = (
                 ErrorCategory.TIMEOUT

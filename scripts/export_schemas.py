@@ -9,7 +9,7 @@ from tooluse_bench.baselines import BaselineRegistry
 from tooluse_bench.config import PROJECT_ROOT
 from tooluse_bench.domain import ExperimentPlan, ModelCatalog
 from tooluse_bench.publication import PublicResultIndex, PublicSnapshotMetadata
-from tooluse_bench.records import RunCompletion, RunManifest, TaskResult
+from tooluse_bench.records import ExecutionAudit, RunCompletion, RunManifest, TaskResult
 from tooluse_bench.release import ReleaseMetadata
 from tooluse_bench.reporting import AggregateResult
 
@@ -17,6 +17,7 @@ SCHEMAS = {
     "baseline-registry.schema.json": BaselineRegistry,
     "aggregate-result.schema.json": AggregateResult,
     "experiment.schema.json": ExperimentPlan,
+    "execution-audit.schema.json": ExecutionAudit,
     "model-catalog.schema.json": ModelCatalog,
     "public-result-index.schema.json": PublicResultIndex,
     "public-snapshot-metadata.schema.json": PublicSnapshotMetadata,

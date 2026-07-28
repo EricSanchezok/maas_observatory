@@ -270,6 +270,11 @@ def test_bfcl_adapter_normalizes_results_and_failures(tmp_path: Path) -> None:
     assert spec["batch_size"] == 1
     assert spec["sdk_max_retries"] == 2
     assert spec["request_timeout_seconds"] == 180
+    audit = json.loads(
+        (adapter_context.workspace / "execution-audit.json").read_text(encoding="utf-8")
+    )
+    assert audit["resource_controls"]["sdk_max_retries"] == 2
+    assert audit["observations"]["observed_sdk_retry_log_count"] == 0
 
     timeout_context = context(
         tmp_path,

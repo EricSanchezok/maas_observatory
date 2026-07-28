@@ -31,9 +31,12 @@ The initial evaluation has three layers:
 3. `toolathlon-verified`: long-horizon agent tasks through the official pinned
    client and a self-hosted evaluation service.
 
-Every selected task is run three times in the release plan. Results report
-Pass@1, Pass@3, Pass^3, uncertainty, error categories, latency, and efficiency.
-No cross-benchmark composite score is calculated.
+The protocol and long-horizon reliability layers use three trials. The primary
+BFCL result uses one complete deterministic-setting run to match leaderboard
+practice; repeatability is measured separately rather than changing the
+official-comparison metric. Results report applicable reliability statistics,
+uncertainty, error categories, latency, and efficiency. No cross-benchmark
+composite score is calculated.
 
 ## Evaluated deployments
 
@@ -99,8 +102,10 @@ uv run tooluse-bench release validate <run-id>
 
 Private runs are append-only under `runs/` and never tracked. A release bundle
 contains sanitized trajectories, a manifest, completion record, aggregate
-metrics, report, data license, and SHA-256 checksums. The deterministic archive
-can be attached to an immutable GitHub Release.
+metrics, adapter execution audits, report, data license, and SHA-256 checksums.
+Execution audits disclose resource controls, process outcomes, and observable
+SDK retry counts without publishing credentials or endpoint URLs. The
+deterministic archive can be attached to an immutable GitHub Release.
 
 Small, reviewable snapshots under `public-results/` are the only result source
 consumed by the Pages site. CI validates their schema, cross-file identities,

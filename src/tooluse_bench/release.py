@@ -11,11 +11,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, TypeAdapter, model_validator
 
 from tooluse_bench.config import PROJECT_ROOT, load_model_catalog
 from tooluse_bench.domain import StrictModel
 from tooluse_bench.records import (
+    ExecutionAudit,
     RunCompletion,
     RunManifest,
     TaskResult,
@@ -25,24 +26,37 @@ from tooluse_bench.redaction import Redactor
 from tooluse_bench.reporting import load_completed_run
 from tooluse_bench.store import sha256_file
 
-EXPECTED_RELEASE_FILES = {
-    "LICENSE-DATA",
-    "checksums.sha256",
-    "completion.json",
-    "manifest.json",
-    "metrics.csv",
-    "metrics.json",
-    "release-metadata.json",
-    "report.md",
-    "results.jsonl.gz",
-}
+RELEASE_FILES_V1 = frozenset(
+    {
+        "LICENSE-DATA",
+        "checksums.sha256",
+        "completion.json",
+        "manifest.json",
+        "metrics.csv",
+        "metrics.json",
+        "release-metadata.json",
+        "report.md",
+        "results.jsonl.gz",
+    }
+)
+RELEASE_FILES_V2 = RELEASE_FILES_V1 | {"execution-audits.json"}
+EXPECTED_RELEASE_FILES = RELEASE_FILES_V2
+EXECUTION_AUDIT_LIST = TypeAdapter(list[ExecutionAudit])
 MAX_RELEASE_TEXT_FILE_BYTES = 64 * 1024 * 1024
 MAX_RESULT_LINE_CHARACTERS = 64 * 1024 * 1024
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 
 
+def release_file_inventory(schema_version: int) -> frozenset[str]:
+    if schema_version == 1:
+        return RELEASE_FILES_V1
+    if schema_version == 2:
+        return RELEASE_FILES_V2
+    raise ValueError(f"unsupported release schema version: {schema_version}")
+
+
 class ReleaseMetadata(StrictModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     run_id: str
     git_commit: str
     created_at: str
@@ -51,9 +65,42 @@ class ReleaseMetadata(StrictModel):
     source_results_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     published_results_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
+    @model_validator(mode="after")
+    def validate_file_inventory(self) -> ReleaseMetadata:
+        expected = tuple(sorted(release_file_inventory(self.schema_version)))
+        if self.files != expected:
+            raise ValueError("release metadata file inventory does not match version")
+        return self
+
 
 def _json_text(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def _write_execution_audits(
+    run_directory: Path,
+    destination: Path,
+    redactor: Redactor,
+    *,
+    run_id: str,
+) -> None:
+    audits: list[ExecutionAudit] = []
+    for source in sorted(run_directory.glob("artifacts/**/execution-audit.json")):
+        sanitized = redactor.value(json.loads(source.read_text(encoding="utf-8")))
+        audit = ExecutionAudit.model_validate(sanitized)
+        if audit.run_id != run_id:
+            raise ValueError(f"execution audit run_id does not match: {source}")
+        audits.append(audit)
+    identities = [
+        (item.benchmark_id, item.deployment_id, item.lane, item.trial)
+        for item in audits
+    ]
+    if len(identities) != len(set(identities)):
+        raise ValueError("duplicate execution audit identity")
+    destination.write_text(
+        _json_text([item.model_dump(mode="json") for item in audits]),
+        encoding="utf-8",
+    )
 
 
 def _write_sanitized_json(
@@ -174,12 +221,18 @@ def build_release(
         destination / "results.jsonl.gz",
         redactor,
     )
+    _write_execution_audits(
+        run_directory,
+        destination / "execution-audits.json",
+        redactor,
+        run_id=manifest.run_id,
+    )
     shutil.copyfile(PROJECT_ROOT / "LICENSE-DATA", destination / "LICENSE-DATA")
     metadata = ReleaseMetadata(
         run_id=manifest.run_id,
         git_commit=manifest.git_commit,
         created_at=manifest.created_at.isoformat(),
-        files=tuple(sorted(EXPECTED_RELEASE_FILES)),
+        files=tuple(sorted(RELEASE_FILES_V2)),
         source_results_sha256=completion.results_sha256,
         published_results_sha256=sha256_file(destination / "results.jsonl.gz"),
     )
@@ -200,10 +253,17 @@ def validate_release(
     *,
     redactor: Redactor | None = None,
 ) -> None:
+    metadata_path = directory / "release-metadata.json"
+    if not metadata_path.is_file() or metadata_path.is_symlink():
+        raise ValueError("release-metadata.json must be a regular file")
+    metadata = ReleaseMetadata.model_validate_json(
+        metadata_path.read_text(encoding="utf-8")
+    )
+    expected_files = release_file_inventory(metadata.schema_version)
     filenames = {path.name for path in directory.iterdir() if path.is_file()}
-    if filenames != EXPECTED_RELEASE_FILES:
-        missing = sorted(EXPECTED_RELEASE_FILES - filenames)
-        extra = sorted(filenames - EXPECTED_RELEASE_FILES)
+    if filenames != expected_files:
+        missing = sorted(expected_files - filenames)
+        extra = sorted(filenames - expected_files)
         raise ValueError(f"invalid release files; missing={missing}, extra={extra}")
     scanner = redactor or Redactor.from_catalog(load_model_catalog())
     for path in sorted(directory.iterdir()):
@@ -256,21 +316,31 @@ def validate_release(
     completion = RunCompletion.model_validate_json(
         (directory / "completion.json").read_text(encoding="utf-8")
     )
-    metadata = ReleaseMetadata.model_validate_json(
-        (directory / "release-metadata.json").read_text(encoding="utf-8")
-    )
     if not (manifest.run_id == completion.run_id == metadata.run_id):
         raise ValueError("release run IDs do not match")
     if metadata.git_commit != manifest.git_commit:
         raise ValueError("release Git commits do not match")
     if metadata.created_at != manifest.created_at.isoformat():
         raise ValueError("release creation timestamps do not match")
-    if metadata.files != tuple(sorted(EXPECTED_RELEASE_FILES)):
+    if metadata.files != tuple(sorted(expected_files)):
         raise ValueError("release metadata file inventory does not match")
     if metadata.source_results_sha256 != completion.results_sha256:
         raise ValueError("release source result hashes do not match")
     if metadata.published_results_sha256 != sha256_file(directory / "results.jsonl.gz"):
         raise ValueError("published result hash does not match release metadata")
+    if metadata.schema_version >= 2:
+        audits_payload = json.loads(
+            (directory / "execution-audits.json").read_text(encoding="utf-8")
+        )
+        audits = EXECUTION_AUDIT_LIST.validate_python(audits_payload)
+        if any(item.run_id != manifest.run_id for item in audits):
+            raise ValueError("execution audit run_id does not match manifest")
+        identities = [
+            (item.benchmark_id, item.deployment_id, item.lane, item.trial)
+            for item in audits
+        ]
+        if len(identities) != len(set(identities)):
+            raise ValueError("duplicate execution audit identity")
     result_count = 0
     status_counts: Counter[TaskStatus] = Counter()
     with gzip.open(
