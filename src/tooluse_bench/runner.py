@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -88,7 +89,8 @@ def _execute_adapter(
     deployment: ModelDeployment,
     selection: object,
     workspace: Path,
-) -> list[TaskResult]:
+    append_result: Callable[[TaskResult], None],
+) -> int:
     from tooluse_bench.domain import BenchmarkSelection
 
     if not isinstance(selection, BenchmarkSelection):
@@ -117,7 +119,11 @@ def _execute_adapter(
             workspace=workspace,
             transport=transport,
         )
-        return list(adapter.run(context))
+        result_count = 0
+        for result in adapter.run(context):
+            append_result(result)
+            result_count += 1
+        return result_count
     finally:
         if transport is not None:
             transport.close()
@@ -221,29 +227,32 @@ def run_experiment(
                     )
                     workspace.mkdir(parents=True, exist_ok=False)
                     try:
-                        results = _execute_adapter(
-                            adapter, spec, deployment, selection, workspace
+                        result_count = _execute_adapter(
+                            adapter,
+                            spec,
+                            deployment,
+                            selection,
+                            workspace,
+                            store.append,
                         )
-                        if not results:
-                            results = [
+                        if result_count == 0:
+                            store.append(
                                 _benchmark_result(
                                     spec,
                                     status=TaskStatus.ERROR,
                                     category=ErrorCategory.INFRASTRUCTURE,
                                     detail="adapter returned no task records",
                                 )
-                            ]
+                            )
                     except Exception as exc:
-                        results = [
+                        store.append(
                             _benchmark_result(
                                 spec,
                                 status=TaskStatus.ERROR,
                                 category=ErrorCategory.INFRASTRUCTURE,
                                 detail=_safe_detail(exc, deployment),
                             )
-                        ]
-                    for result in results:
-                        store.append(result)
+                        )
 
     store.finalize()
     return store.directory

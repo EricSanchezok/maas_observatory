@@ -11,3 +11,5 @@ public data formats.
 - Add deterministic reporting, recursive redaction, and release validation.
 - Add reproducibility documentation and automated quality gates.
 - Record the first completed three-trial protocol smoke release candidate.
+- Harden completion verification, streaming result publication, checksum
+  parsing, and partial-adapter failure preservation.

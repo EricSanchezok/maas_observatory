@@ -17,7 +17,13 @@ from pydantic import Field
 from tooluse_bench.baselines import BaselineRegistry, Comparability
 from tooluse_bench.config import load_baselines
 from tooluse_bench.domain import Lane, StrictModel
-from tooluse_bench.records import RunManifest, TaskResult, TaskStatus
+from tooluse_bench.records import (
+    RunCompletion,
+    RunManifest,
+    TaskResult,
+    TaskStatus,
+)
+from tooluse_bench.store import sha256_file
 
 
 class AggregateResult(StrictModel):
@@ -62,6 +68,41 @@ def load_results(path: Path) -> list[TaskResult]:
         except ValueError as exc:
             raise ValueError(f"{path}:{line_number}: invalid TaskResult") from exc
     return results
+
+
+def load_completed_run(
+    run_directory: Path,
+) -> tuple[RunManifest, RunCompletion, list[TaskResult]]:
+    manifest_path = run_directory / "manifest.json"
+    completion_path = run_directory / "completion.json"
+    results_path = run_directory / "results.jsonl"
+    missing = [
+        str(path)
+        for path in (manifest_path, completion_path, results_path)
+        if not path.is_file()
+    ]
+    if missing:
+        raise ValueError(f"run is incomplete; missing: {', '.join(missing)}")
+
+    manifest = RunManifest.model_validate_json(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    completion = RunCompletion.model_validate_json(
+        completion_path.read_text(encoding="utf-8")
+    )
+    results = load_results(results_path)
+    if manifest.run_id != completion.run_id:
+        raise ValueError("manifest and completion run IDs do not match")
+    if any(result.run_id != manifest.run_id for result in results):
+        raise ValueError("one or more result run IDs do not match the manifest")
+    if completion.results_sha256 != sha256_file(results_path):
+        raise ValueError("results checksum does not match completion record")
+    if completion.result_count != len(results):
+        raise ValueError("result count does not match completion record")
+    status_counts = Counter(result.status for result in results)
+    if dict(status_counts) != completion.status_counts:
+        raise ValueError("status counts do not match completion record")
+    return manifest, completion, results
 
 
 def _percentile(values: list[float], quantile: float) -> float | None:
@@ -187,12 +228,16 @@ def aggregate_results(
         pass_at_1 = (
             mean(value for task in successes for value in task) if successes else None
         )
-        pass_at_3 = mean(float(any(task)) for task in successes) if successes else None
+        pass_at_3 = (
+            mean(float(any(task)) for task in successes)
+            if successes and expected_trials == 3
+            else None
+        )
         pass_pow_3 = (
             mean(
                 float(len(task) == expected_trials and all(task)) for task in successes
             )
-            if successes
+            if successes and expected_trials == 3
             else None
         )
         ci_low, ci_high = _bootstrap_ci(
@@ -325,34 +370,50 @@ def render_markdown_report(
             "",
             "## Official and published context",
             "",
-            "Only baselines marked `exact` may produce an official delta. The entries "
-            "below are contextual unless their precision, benchmark release, harness, "
-            "and reasoning configuration match the evaluated deployment.",
-            "",
-            "| Upstream model | Benchmark release | Metric | Score "
-            "| Comparability | Source |",
-            "|---|---|---|---:|---|---|",
         ]
     )
-    for baseline_item in sorted(
-        baselines.baselines, key=lambda value: value.baseline_id
-    ):
-        lines.append(
-            "| "
-            + " | ".join(
-                (
-                    baseline_item.upstream_model,
+    evaluated_benchmarks = {item.benchmark_id for item in aggregates}
+    relevant_baselines = [
+        item
+        for item in baselines.baselines
+        if item.benchmark_id in evaluated_benchmarks
+    ]
+    if relevant_baselines:
+        lines.extend(
+            [
+                "Only baselines marked `exact` may produce an official delta. "
+                "The entries below are contextual unless their precision, benchmark "
+                "release, harness, and reasoning configuration match the evaluated "
+                "deployment.",
+                "",
+                "| Upstream model | Benchmark release | Metric | Score "
+                "| Comparability | Source |",
+                "|---|---|---|---:|---|---|",
+            ]
+        )
+        for baseline_item in sorted(
+            relevant_baselines, key=lambda value: value.baseline_id
+        ):
+            lines.append(
+                "| "
+                + " | ".join(
                     (
-                        f"{baseline_item.benchmark_id} / "
-                        f"{baseline_item.benchmark_release}"
-                    ),
-                    baseline_item.metric,
-                    f"{baseline_item.score:.1f}%",
-                    baseline_item.comparability.value,
-                    f"[source]({baseline_item.source_url})",
+                        baseline_item.upstream_model,
+                        (
+                            f"{baseline_item.benchmark_id} / "
+                            f"{baseline_item.benchmark_release}"
+                        ),
+                        baseline_item.metric,
+                        f"{baseline_item.score:.1f}%",
+                        baseline_item.comparability.value,
+                        f"[source]({baseline_item.source_url})",
+                    )
                 )
+                + " |"
             )
-            + " |"
+    else:
+        lines.append(
+            "No published baseline is registered for the evaluated benchmark release."
         )
     lines.extend(
         [
@@ -377,10 +438,7 @@ def build_report(
     *,
     baselines: BaselineRegistry | None = None,
 ) -> Path:
-    manifest = RunManifest.model_validate_json(
-        (run_directory / "manifest.json").read_text(encoding="utf-8")
-    )
-    results = load_results(run_directory / "results.jsonl")
+    manifest, _, results = load_completed_run(run_directory)
     registry = baselines or load_baselines()
     aggregates = aggregate_results(results, baselines=registry)
     report_directory = run_directory / "report"

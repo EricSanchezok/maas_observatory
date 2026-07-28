@@ -177,6 +177,14 @@ def test_aggregate_statistics_are_deterministic_and_exact_delta_is_guarded() -> 
     assert exact_first.pass_at_1_ci_low == exact_second.pass_at_1_ci_low
     assert exact_first.pass_at_1_ci_high == exact_second.pass_at_1_ci_high
 
+    one_trial = aggregate_results(
+        [make_result(task_id="task-a", trial=1, status=TaskStatus.PASS)],
+        baselines=baseline_registry(),
+    )[0]
+    assert one_trial.expected_trials == 1
+    assert one_trial.pass_at_3 is None
+    assert one_trial.pass_pow_3 is None
+
 
 def test_baseline_registry_rejects_false_exact_and_duplicate_ids() -> None:
     exact_record = (
@@ -248,6 +256,35 @@ def test_release_validation_detects_tampering(tmp_path: Path) -> None:
     )
     (release_directory / "report.md").write_text("tampered", encoding="utf-8")
     with pytest.raises(ValueError, match="checksums"):
+        validate_release(release_directory)
+
+
+def test_report_rejects_incomplete_and_tampered_runs(tmp_path: Path) -> None:
+    incomplete = tmp_path / "incomplete" / RUN_ID
+    create_completed_run(incomplete)
+    (incomplete / "completion.json").unlink()
+    with pytest.raises(ValueError, match="run is incomplete"):
+        build_report(incomplete, baselines=baseline_registry())
+
+    tampered = tmp_path / "tampered" / RUN_ID
+    create_completed_run(tampered)
+    with (tampered / "results.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write("{}\n")
+    with pytest.raises(ValueError, match=r"invalid TaskResult|checksum"):
+        build_report(tampered, baselines=baseline_registry())
+
+
+def test_release_validation_rejects_malformed_checksums(tmp_path: Path) -> None:
+    run_directory = tmp_path / "private" / RUN_ID
+    create_completed_run(run_directory)
+    build_report(run_directory, baselines=baseline_registry())
+    release_directory, _ = build_release(
+        run_directory,
+        output_root=tmp_path / "release",
+    )
+    checksum_path = release_directory / "checksums.sha256"
+    checksum_path.write_text("not-a-checksum\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="malformed line"):
         validate_release(release_directory)
 
 

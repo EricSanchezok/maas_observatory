@@ -53,6 +53,10 @@ The report includes:
 - error and not-run counts;
 - p50/p95 latency, turns, tool calls, and token use where available.
 
+Pass@3 and Pass^3 are emitted only for experiments with exactly three expected
+trials. Other trial counts retain Pass@1 but leave those fields empty rather
+than attaching a misleading label.
+
 Transport retries are limited to 429 responses, server errors, timeouts, and
 transport exceptions. Content or protocol failures are not retried. All failed
 and not-run observations remain in the trajectory file.

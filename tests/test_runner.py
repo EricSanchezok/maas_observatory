@@ -45,6 +45,12 @@ class FakeAdapter(BenchmarkAdapter):
         )
 
 
+class PartiallyFailingAdapter(FakeAdapter):
+    def run(self, context: AdapterContext) -> Iterable[TaskResult]:
+        yield from super().run(context)
+        raise RuntimeError("synthetic adapter failure")
+
+
 def test_runner_records_supported_and_unsupported_lanes(tmp_path: Path) -> None:
     experiment = tmp_path / "experiment.yaml"
     experiment.write_text(
@@ -83,3 +89,44 @@ benchmarks:
     assert [record["status"] for record in records].count("pass") == 2
     assert [record["status"] for record in records].count("not_run") == 2
     assert (directory / "completion.json").exists()
+
+
+def test_runner_preserves_records_emitted_before_adapter_failure(
+    tmp_path: Path,
+) -> None:
+    experiment = tmp_path / "partial.yaml"
+    experiment.write_text(
+        """
+schema_version: 1
+experiment_id: partial-test
+description: Partial adapter failure test
+models: [deepseek-v4-pro]
+lanes: [standardized]
+output_root: ignored
+benchmarks:
+  - benchmark_id: fake
+    profile: full
+    trials: 1
+    options: {}
+""".lstrip(),
+        encoding="utf-8",
+    )
+    deployment = load_catalog()[0]
+    environment = {
+        deployment.endpoint.base_url_env: "https://endpoint.invalid/v1",
+        deployment.endpoint.api_key_env: "secret",
+    }
+    with patch.dict(os.environ, environment, clear=False):
+        directory = run_experiment(
+            experiment_path=experiment,
+            catalog_path=DEFAULT_CATALOG,
+            output_root=tmp_path / "partial-runs",
+            registry=BenchmarkRegistry([PartiallyFailingAdapter()]),
+        )
+    records = [
+        json.loads(line)
+        for line in (directory / "results.jsonl").read_text().splitlines()
+    ]
+    assert [record["status"] for record in records] == ["pass", "error"]
+    assert records[1]["task_id"] == "__benchmark__"
+    assert "synthetic adapter failure" in records[1]["error_detail"]

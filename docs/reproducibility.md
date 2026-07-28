@@ -37,6 +37,11 @@ and SHA-256 digests of configuration and dependency locks. Task records are
 appended to JSONL and fsynced. Finalization writes the record count, status
 counts, and result-file hash.
 
+Reporting refuses a run without `completion.json` and rechecks the result hash,
+record count, status counts, and run IDs. Adapter records are appended as soon
+as they are yielded, so a later adapter exception does not erase earlier task
+evidence.
+
 Native-transport experiments may set `transport_timeout_seconds`,
 `transport_wall_timeout_seconds`, and `transport_max_retries` in benchmark
 options. The protocol smoke uses a 90-second inactivity timeout, a 30-second

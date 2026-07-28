@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import gzip
-import io
 import json
+import re
 import shutil
 import tarfile
+from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,8 +15,14 @@ from pydantic import Field
 
 from tooluse_bench.config import PROJECT_ROOT, load_model_catalog
 from tooluse_bench.domain import StrictModel
-from tooluse_bench.records import RunCompletion, RunManifest, TaskResult
+from tooluse_bench.records import (
+    RunCompletion,
+    RunManifest,
+    TaskResult,
+    TaskStatus,
+)
 from tooluse_bench.redaction import Redactor
+from tooluse_bench.reporting import load_completed_run
 from tooluse_bench.store import sha256_file
 
 EXPECTED_RELEASE_FILES = {
@@ -29,6 +36,9 @@ EXPECTED_RELEASE_FILES = {
     "report.md",
     "results.jsonl.gz",
 }
+MAX_RELEASE_TEXT_FILE_BYTES = 64 * 1024 * 1024
+MAX_RESULT_LINE_CHARACTERS = 64 * 1024 * 1024
+SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 
 
 class ReleaseMetadata(StrictModel):
@@ -63,11 +73,12 @@ def _write_sanitized_results(
     destination: Path,
     redactor: Redactor,
 ) -> None:
-    buffer = io.BytesIO()
-    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as compressed:
-        for line_number, line in enumerate(
-            source.read_text(encoding="utf-8").splitlines(), start=1
-        ):
+    with (
+        source.open(mode="r", encoding="utf-8") as source_handle,
+        destination.open(mode="wb") as destination_handle,
+        gzip.GzipFile(fileobj=destination_handle, mode="wb", mtime=0) as compressed,
+    ):
+        for line_number, line in enumerate(source_handle, start=1):
             if not line.strip():
                 continue
             payload = json.loads(line)
@@ -85,7 +96,6 @@ def _write_sanitized_results(
                 separators=(",", ":"),
             )
             compressed.write(f"{rendered}\n".encode())
-    destination.write_bytes(buffer.getvalue())
 
 
 def _checksums(directory: Path) -> dict[str, str]:
@@ -107,8 +117,11 @@ def _write_checksums(directory: Path) -> None:
 
 
 def _build_deterministic_tar(source: Path, destination: Path) -> None:
-    raw = io.BytesIO()
-    with tarfile.open(fileobj=raw, mode="w") as archive:
+    with (
+        destination.open("wb") as destination_handle,
+        gzip.GzipFile(fileobj=destination_handle, mode="wb", mtime=0) as compressed,
+        tarfile.open(fileobj=compressed, mode="w|") as archive,
+    ):
         for path in sorted(source.iterdir()):
             info = archive.gettarinfo(str(path), arcname=f"{source.name}/{path.name}")
             info.uid = 0
@@ -118,11 +131,6 @@ def _build_deterministic_tar(source: Path, destination: Path) -> None:
             info.mtime = 0
             with path.open("rb") as handle:
                 archive.addfile(info, handle)
-    with (
-        destination.open("wb") as destination_handle,
-        gzip.GzipFile(fileobj=destination_handle, mode="wb", mtime=0) as compressed,
-    ):
-        compressed.write(raw.getvalue())
 
 
 def build_release(
@@ -142,12 +150,7 @@ def build_release(
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise ValueError(f"run is not release-ready; missing: {', '.join(missing)}")
-    manifest = RunManifest.model_validate_json(required[0].read_text(encoding="utf-8"))
-    completion = RunCompletion.model_validate_json(
-        required[1].read_text(encoding="utf-8")
-    )
-    if completion.results_sha256 != sha256_file(required[2]):
-        raise ValueError("private results checksum does not match completion record")
+    manifest, completion, _ = load_completed_run(run_directory)
 
     catalog = load_model_catalog()
     redactor = Redactor.from_catalog(catalog)
@@ -204,17 +207,44 @@ def validate_release(
         raise ValueError(f"invalid release files; missing={missing}, extra={extra}")
     scanner = redactor or Redactor.from_catalog(load_model_catalog())
     for path in sorted(directory.iterdir()):
-        if path.suffix == ".gz":
-            text = gzip.decompress(path.read_bytes()).decode("utf-8")
-        else:
-            text = path.read_text(encoding="utf-8")
+        if path.is_symlink():
+            raise ValueError(f"release file must not be a symlink: {path.name}")
+        if path.name == "results.jsonl.gz":
+            try:
+                with gzip.open(path, mode="rt", encoding="utf-8") as handle:
+                    for line_number, line in enumerate(handle, start=1):
+                        if len(line) > MAX_RESULT_LINE_CHARACTERS:
+                            raise ValueError(
+                                "results.jsonl.gz:"
+                                f"{line_number}: line exceeds safety limit"
+                            )
+                        findings = scanner.findings(line)
+                        if findings:
+                            raise ValueError(
+                                f"{path.name}:{line_number} contains: "
+                                f"{', '.join(findings)}"
+                            )
+            except (gzip.BadGzipFile, UnicodeDecodeError, OSError) as exc:
+                raise ValueError("results.jsonl.gz is not valid UTF-8 gzip") from exc
+            continue
+        if path.stat().st_size > MAX_RELEASE_TEXT_FILE_BYTES:
+            raise ValueError(f"release text file exceeds safety limit: {path.name}")
+        text = path.read_text(encoding="utf-8")
         findings = scanner.findings(text)
         if findings:
             raise ValueError(f"{path.name} contains: {', '.join(findings)}")
 
     expected: dict[str, str] = {}
-    for line in (directory / "checksums.sha256").read_text().splitlines():
-        digest, filename = line.split("  ", 1)
+    checksum_lines = (directory / "checksums.sha256").read_text().splitlines()
+    for line_number, line in enumerate(checksum_lines, start=1):
+        parts = line.split("  ", 1)
+        if len(parts) != 2:
+            raise ValueError(f"checksums.sha256:{line_number}: malformed line")
+        digest, filename = parts
+        if not SHA256_PATTERN.fullmatch(digest):
+            raise ValueError(f"checksums.sha256:{line_number}: invalid SHA-256")
+        if filename in expected:
+            raise ValueError(f"checksums.sha256:{line_number}: duplicate filename")
         expected[filename] = digest
     actual = _checksums(directory)
     if expected != actual:
@@ -231,23 +261,33 @@ def validate_release(
     )
     if not (manifest.run_id == completion.run_id == metadata.run_id):
         raise ValueError("release run IDs do not match")
+    if metadata.git_commit != manifest.git_commit:
+        raise ValueError("release Git commits do not match")
+    if metadata.created_at != manifest.created_at.isoformat():
+        raise ValueError("release creation timestamps do not match")
     if metadata.files != tuple(sorted(EXPECTED_RELEASE_FILES)):
         raise ValueError("release metadata file inventory does not match")
     if metadata.source_results_sha256 != completion.results_sha256:
         raise ValueError("release source result hashes do not match")
     if metadata.published_results_sha256 != sha256_file(directory / "results.jsonl.gz"):
         raise ValueError("published result hash does not match release metadata")
-    for line_number, line in enumerate(
-        gzip.decompress((directory / "results.jsonl.gz").read_bytes())
-        .decode("utf-8")
-        .splitlines(),
-        start=1,
-    ):
-        try:
-            result = TaskResult.model_validate_json(line)
-        except ValueError as exc:
-            raise ValueError(
-                f"results.jsonl.gz:{line_number}: invalid TaskResult"
-            ) from exc
-        if result.run_id != manifest.run_id:
-            raise ValueError("release result run_id does not match manifest")
+    result_count = 0
+    status_counts: Counter[TaskStatus] = Counter()
+    with gzip.open(
+        directory / "results.jsonl.gz", mode="rt", encoding="utf-8"
+    ) as handle:
+        for line_number, line in enumerate(handle, start=1):
+            try:
+                result = TaskResult.model_validate_json(line)
+            except ValueError as exc:
+                raise ValueError(
+                    f"results.jsonl.gz:{line_number}: invalid TaskResult"
+                ) from exc
+            if result.run_id != manifest.run_id:
+                raise ValueError("release result run_id does not match manifest")
+            result_count += 1
+            status_counts[result.status] += 1
+    if result_count != completion.result_count:
+        raise ValueError("release result count does not match completion")
+    if dict(status_counts) != completion.status_counts:
+        raise ValueError("release status counts do not match completion")
