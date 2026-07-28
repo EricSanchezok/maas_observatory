@@ -10,3 +10,4 @@ public data formats.
 - Add protocol probe, BFCL V4, and Toolathlon-Verified adapters.
 - Add deterministic reporting, recursive redaction, and release validation.
 - Add reproducibility documentation and automated quality gates.
+- Record the first completed three-trial protocol smoke release candidate.
