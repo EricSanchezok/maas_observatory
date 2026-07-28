@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from tooluse_bench.benchmarks.base import AdapterContext
-from tooluse_bench.benchmarks.bfcl import BFCLAdapter
+from tooluse_bench.benchmarks.bfcl import BFCLAdapter, bfcl_failure_category
 from tooluse_bench.benchmarks.external import CommandOutcome, run_logged_command
 from tooluse_bench.benchmarks.probe import ProbeAdapter
 from tooluse_bench.benchmarks.toolathlon import (
@@ -70,6 +70,23 @@ def command_outcome(workspace: Path, *, return_code: int = 0) -> CommandOutcome:
         stdout_path=stdout,
         stderr_path=stderr,
     )
+
+
+@pytest.mark.parametrize(
+    ("task_id", "expected"),
+    [
+        ("simple_python/1", ErrorCategory.ARGUMENTS),
+        ("multiple/1", ErrorCategory.SELECTION),
+        ("parallel/1", ErrorCategory.PLANNING),
+        ("multi_turn_base/1", ErrorCategory.TOOL_RESULT_INTEGRATION),
+        ("memory_kv/1", ErrorCategory.PLANNING),
+    ],
+)
+def test_bfcl_failure_category_tracks_observed_capability_boundary(
+    task_id: str,
+    expected: ErrorCategory,
+) -> None:
+    assert bfcl_failure_category(task_id) is expected
 
 
 class SequenceTransport:

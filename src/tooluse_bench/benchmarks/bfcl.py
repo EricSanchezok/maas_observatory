@@ -67,7 +67,7 @@ PROFILE_SUBSETS = {
 }
 
 
-def _failure_category(task_id: str) -> ErrorCategory:
+def bfcl_failure_category(task_id: str) -> ErrorCategory:
     subset = task_id.split("/", 1)[0]
     if "irrelevance" in subset or subset in {"multiple", "live_multiple"}:
         return ErrorCategory.SELECTION
@@ -317,7 +317,7 @@ class BFCLAdapter(BenchmarkAdapter):
                         error_category=(
                             ErrorCategory.NONE
                             if score == 1
-                            else _failure_category(task_id)
+                            else bfcl_failure_category(task_id)
                         ),
                         artifact_paths=_source_artifacts(
                             normalized_path.relative_to(context.workspace),

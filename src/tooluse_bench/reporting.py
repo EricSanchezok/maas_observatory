@@ -16,6 +16,7 @@ from pydantic import Field
 
 from tooluse_bench import __version__
 from tooluse_bench.baselines import BaselineRegistry, Comparability
+from tooluse_bench.benchmarks.bfcl import bfcl_failure_category
 from tooluse_bench.config import load_baselines
 from tooluse_bench.domain import Lane, StrictModel
 from tooluse_bench.provenance import git_state
@@ -191,6 +192,14 @@ def _token_values(results: list[TaskResult]) -> list[float]:
     return values
 
 
+def _reported_error_category(result: TaskResult) -> ErrorCategory:
+    if result.error_category is not ErrorCategory.NONE:
+        return result.error_category
+    if result.benchmark_id == "bfcl-v4" and result.status is TaskStatus.FAIL:
+        return bfcl_failure_category(result.task_id)
+    return ErrorCategory.NONE
+
+
 def _exact_baseline(
     baselines: BaselineRegistry,
     *,
@@ -309,9 +318,9 @@ def _task_group_aggregates(
         if group_id in subset_failures:
             status_counts[TaskStatus.ERROR.value] += 1
         error_categories = Counter(
-            item.error_category.value
+            _reported_error_category(item).value
             for item in group_records
-            if item.error_category is not ErrorCategory.NONE
+            if _reported_error_category(item) is not ErrorCategory.NONE
         )
         if group_id in subset_failures:
             error_categories[ErrorCategory.INFRASTRUCTURE.value] += 1
@@ -404,9 +413,9 @@ def aggregate_results(
         tool_calls = _numeric_values(evaluated, "tool_calls")
         total_tokens = _token_values(evaluated)
         categories = Counter(
-            item.error_category.value
+            _reported_error_category(item).value
             for item in records
-            if item.error_category.value != "none"
+            if _reported_error_category(item) is not ErrorCategory.NONE
         )
         baseline = _exact_baseline(
             registry,

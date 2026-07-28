@@ -286,11 +286,7 @@ def test_bfcl_subset_metrics_preserve_partial_coverage() -> None:
     [aggregate] = aggregate_results(
         [
             item("simple_python/0", TaskStatus.PASS),
-            item(
-                "simple_python/1",
-                TaskStatus.FAIL,
-                ErrorCategory.ARGUMENTS,
-            ),
+            item("simple_python/1", TaskStatus.FAIL),
             item("parallel/0", TaskStatus.ERROR, ErrorCategory.TIMEOUT),
             item(
                 "__subset__/web_search_base",
@@ -306,6 +302,7 @@ def test_bfcl_subset_metrics_preserve_partial_coverage() -> None:
     assert aggregate.pass_at_1 == pytest.approx(1 / 3)
     groups = {group.group_id: group for group in aggregate.task_groups}
     assert groups["simple_python"].pass_at_1 == 0.5
+    assert groups["simple_python"].error_categories == {"arguments": 1}
     assert groups["parallel"].error_rate == 1
     assert groups["web_search_base"].complete is False
     assert groups["web_search_base"].task_count == 0

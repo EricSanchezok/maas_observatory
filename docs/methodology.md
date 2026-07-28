@@ -70,6 +70,10 @@ BFCL aggregate rows retain per-subset coverage and scores. A partially
 completed subset is marked partial, and its transport or infrastructure errors
 remain separate from model capability failures. The overall row cannot be
 presented as complete when any declared subset is missing or partial.
+For compatible runs created before per-record BFCL capability labels were
+introduced, the report derives the observed boundary from the immutable subset
+identifier (arguments, selection, planning, or tool-result integration). The
+source task record is not rewritten.
 
 Transport retries are limited to 429 responses, server errors, timeouts, and
 transport exceptions. Content or protocol failures are not retried. All failed
