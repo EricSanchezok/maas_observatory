@@ -70,6 +70,9 @@ uv run tooluse-bench run \
   --experiment config/experiments/protocol-smoke.yaml
 ```
 
+The smoke plan uses a 90-second request timeout and no transport retry. These
+settings are recorded in the experiment and do not change the release plan.
+
 ## Run, report, and release
 
 ```bash

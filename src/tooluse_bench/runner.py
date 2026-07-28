@@ -96,7 +96,15 @@ def _execute_adapter(
     transport: OpenAITransport | None = None
     try:
         if adapter.needs_native_transport():
-            transport = OpenAITransport(deployment)
+            transport = OpenAITransport(
+                deployment,
+                timeout_seconds=(
+                    float(selection.options["transport_timeout_seconds"])
+                    if "transport_timeout_seconds" in selection.options
+                    else None
+                ),
+                max_retries=int(selection.options.get("transport_max_retries", 2)),
+            )
         context = AdapterContext(
             spec=spec,
             deployment=deployment,

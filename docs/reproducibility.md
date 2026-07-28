@@ -37,6 +37,11 @@ and SHA-256 digests of configuration and dependency locks. Task records are
 appended to JSONL and fsynced. Finalization writes the record count, status
 counts, and result-file hash.
 
+Native-transport experiments may set `transport_timeout_seconds` and
+`transport_max_retries` in benchmark options. The protocol smoke uses a
+90-second timeout with no retry so an unavailable endpoint cannot stall the
+diagnostic gate; the release plan retains the transport defaults.
+
 ## Report and publish
 
 ```bash

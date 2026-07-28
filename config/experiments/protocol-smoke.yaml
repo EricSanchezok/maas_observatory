@@ -10,4 +10,6 @@ benchmarks:
   - benchmark_id: probe
     profile: full
     trials: 3
-    options: {}
+    options:
+      transport_timeout_seconds: 90
+      transport_max_retries: 0

@@ -52,16 +52,21 @@ class OpenAITransport:
         *,
         client: httpx.Client | None = None,
         max_retries: int = 2,
+        timeout_seconds: float | None = None,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         if deployment.configuration_errors():
             raise ValueError("; ".join(deployment.configuration_errors()))
+        if max_retries < 0:
+            raise ValueError("max_retries must be non-negative")
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
         self.deployment = deployment
         self.max_retries = max_retries
         self.sleeper = sleeper
         self._owns_client = client is None
         self.client = client or httpx.Client(
-            timeout=deployment.timeout_seconds or 600,
+            timeout=timeout_seconds or deployment.timeout_seconds or 600,
             trust_env=False,
         )
 

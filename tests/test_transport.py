@@ -105,3 +105,16 @@ def test_transport_redacts_secret_and_endpoint_from_http_error() -> None:
     assert secret not in detail
     assert endpoint not in detail
     assert detail.count("[REDACTED]") == 2
+
+
+def test_transport_rejects_invalid_retry_and_timeout_configuration() -> None:
+    deployment = load_catalog()[0]
+    values = {
+        deployment.endpoint.base_url_env: "https://endpoint.invalid/v1",
+        deployment.endpoint.api_key_env: "test-secret",
+    }
+    with patch.dict(os.environ, values, clear=False):
+        with pytest.raises(ValueError, match="non-negative"):
+            OpenAITransport(deployment, max_retries=-1)
+        with pytest.raises(ValueError, match="positive"):
+            OpenAITransport(deployment, timeout_seconds=0)
