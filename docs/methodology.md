@@ -24,7 +24,9 @@ upstream score comparable.
 The probe tests exact arguments, refusal of irrelevant tools, tool selection,
 parallel calls, and clarification when required information is missing. Only
 native `message.tool_calls` are accepted; a textual imitation is a protocol
-failure for common agent clients.
+failure for common agent clients. Probe requests cap output at 4,096 tokens by
+default so a simple protocol diagnostic cannot consume a deployment's entire
+maximum output allowance.
 
 ### BFCL V4
 

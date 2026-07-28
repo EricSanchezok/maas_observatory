@@ -13,3 +13,4 @@ benchmarks:
     options:
       transport_timeout_seconds: 90
       transport_max_retries: 0
+      max_tokens: 4096

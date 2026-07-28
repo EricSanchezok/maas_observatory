@@ -9,11 +9,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tooluse_bench.benchmarks.base import AdapterContext, BenchmarkAdapter
+from tooluse_bench.domain import BenchmarkSelection, ModelDeployment
 from tooluse_bench.records import (
     BenchmarkMetadata,
     ErrorCategory,
     TaskResult,
     TaskStatus,
+    ValidationIssue,
     result_from_spec,
 )
 from tooluse_bench.transport import TransportFailure
@@ -230,6 +232,32 @@ class ProbeAdapter(BenchmarkAdapter):
     def needs_native_transport(self) -> bool:
         return True
 
+    def validate(
+        self, selection: BenchmarkSelection, deployment: ModelDeployment
+    ) -> tuple[ValidationIssue, ...]:
+        issues = list(super().validate(selection, deployment))
+        max_tokens = selection.options.get("max_tokens", 4096)
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int):
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    code="invalid_max_tokens",
+                    message="probe max_tokens must be a positive integer",
+                )
+            )
+        elif max_tokens <= 0 or max_tokens > deployment.output_limit:
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    code="invalid_max_tokens",
+                    message=(
+                        "probe max_tokens must be positive and no greater than "
+                        "the deployment output limit"
+                    ),
+                )
+            )
+        return tuple(issues)
+
     def run(self, context: AdapterContext) -> Iterable[TaskResult]:
         if context.transport is None:
             raise RuntimeError("probe requires the native OpenAI transport")
@@ -243,6 +271,7 @@ class ProbeAdapter(BenchmarkAdapter):
                 "tool_choice": "auto",
                 "temperature": 0,
                 "seed": context.spec.seed,
+                "max_tokens": int(context.selection.options.get("max_tokens", 4096)),
             }
             try:
                 outcome = context.transport.chat_completion(payload)

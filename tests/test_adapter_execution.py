@@ -129,6 +129,21 @@ def test_probe_adapter_executes_all_cases(tmp_path: Path) -> None:
     assert adapter.needs_native_transport()
     assert [result.status for result in results] == [TaskStatus.PASS] * 5
     assert all(result.usage == {"total_tokens": 10} for result in results)
+    assert all(
+        result.request and result.request["max_tokens"] == 4096 for result in results
+    )
+
+    for invalid_value in (0, "many", True, load_catalog()[0].output_limit + 1):
+        invalid_selection = BenchmarkSelection(
+            benchmark_id="probe",
+            profile="full",
+            trials=1,
+            options={"max_tokens": invalid_value},
+        )
+        assert [
+            issue.code
+            for issue in adapter.validate(invalid_selection, load_catalog()[0])
+        ] == ["invalid_max_tokens"]
 
 
 def test_probe_adapter_records_transport_and_protocol_errors(tmp_path: Path) -> None:
