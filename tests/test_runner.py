@@ -108,6 +108,15 @@ benchmarks:
         json.loads(line)
         for line in (directory / "results.jsonl").read_text().splitlines()
     ]
+    manifest = json.loads((directory / "manifest.json").read_text())
+    assert set(manifest["dependency_locks_sha256"]) == {
+        "benchmark-envs/bfcl/uv.lock",
+        "benchmark-envs/toolathlon/uv.lock",
+        "uv.lock",
+    }
+    assert all(
+        len(digest) == 64 for digest in manifest["dependency_locks_sha256"].values()
+    )
     assert len(records) == 4
     assert [record["status"] for record in records].count("pass") == 2
     assert [record["status"] for record in records].count("not_run") == 2

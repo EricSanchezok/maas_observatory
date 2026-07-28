@@ -1,0 +1,15 @@
+schema_version: 1
+experiment_id: bfcl-harness-smoke-v1
+description: Small real-endpoint validation of the pinned EvalScope BFCL adapter.
+models: [deepseek-v4-flash]
+lanes: [standardized]
+output_root: runs
+benchmarks:
+  - benchmark_id: bfcl-v4
+    profile: smoke
+    trials: 1
+    options:
+      limit: 3
+      batch_size: 1
+      temperature: 0
+      timeout_seconds: 1800

@@ -72,6 +72,13 @@ uv run tooluse-bench run \
   --experiment config/experiments/protocol-smoke.yaml
 ```
 
+Then validate the pinned EvalScope integration on a bounded real BFCL sample:
+
+```bash
+uv run tooluse-bench run \
+  --experiment config/experiments/bfcl-harness-smoke.yaml
+```
+
 The smoke plan uses a 90-second inactivity timeout, a 30-second POSIX
 wall-clock deadline, no transport retry, and a 4,096-token output cap. These
 settings are recorded in the experiment. The probe output cap also applies by
@@ -120,9 +127,9 @@ upstream score as if they were the same experiment.
 ## Development
 
 ```bash
-uv run ruff format --check src tests scripts
-uv run ruff check src tests scripts
-uv run mypy src
+uv run ruff format --check src tests scripts benchmark-envs/*/*.py
+uv run ruff check src tests scripts benchmark-envs/*/*.py
+uv run mypy src benchmark-envs/bfcl/normalize.py
 uv run pytest --cov=tooluse_bench --cov-report=term-missing
 uv run python scripts/check_schemas.py
 uv run python scripts/check_public_results.py

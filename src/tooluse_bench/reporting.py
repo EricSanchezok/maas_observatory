@@ -254,7 +254,11 @@ def aggregate_results(
         latencies = [
             item.latency_seconds
             for item in evaluated
-            if item.attempts > 0 and item.task_id != "__benchmark__"
+            if (
+                item.attempts > 0
+                and item.task_id != "__benchmark__"
+                and item.latency_seconds is not None
+            )
         ]
         turns = _numeric_values(evaluated, "turns")
         tool_calls = _numeric_values(evaluated, "tool_calls")
@@ -330,6 +334,10 @@ def render_markdown_report(
         f"- Created at: `{manifest.created_at.isoformat()}`",
         f"- Configuration SHA-256: `{manifest.configuration_sha256}`",
         f"- Dependency lock SHA-256: `{manifest.dependency_lock_sha256}`",
+        *[
+            f"- Dependency lock `{path}`: `{digest}`"
+            for path, digest in sorted(manifest.dependency_locks_sha256.items())
+        ],
         "",
         "## Results",
         "",

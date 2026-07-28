@@ -181,7 +181,12 @@ class BFCLAdapter(BenchmarkAdapter):
                 score=score,
                 started_at=started_at,
                 finished_at=finished_at,
-                latency_seconds=float(raw.get("latency_seconds", 0)),
+                latency_seconds=(
+                    float(raw["latency_seconds"])
+                    if isinstance(raw.get("latency_seconds"), int | float)
+                    and not isinstance(raw["latency_seconds"], bool)
+                    else None
+                ),
                 response={"upstream_record": raw.get("record")},
                 artifact_paths=(
                     str(normalized_path.relative_to(context.workspace)),

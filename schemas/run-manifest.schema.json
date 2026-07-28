@@ -82,6 +82,13 @@
       "title": "Dependency Lock Sha256",
       "type": "string"
     },
+    "dependency_locks_sha256": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Dependency Locks Sha256",
+      "type": "object"
+    },
     "experiment_id": {
       "title": "Experiment Id",
       "type": "string"

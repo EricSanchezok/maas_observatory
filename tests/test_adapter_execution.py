@@ -247,6 +247,7 @@ def test_bfcl_adapter_normalizes_results_and_failures(tmp_path: Path) -> None:
         TaskStatus.PASS,
         TaskStatus.FAIL,
     ]
+    assert [result.latency_seconds for result in results] == [0.5, None]
     spec = json.loads(
         (adapter_context.workspace / "bfcl-spec.json").read_text(encoding="utf-8")
     )

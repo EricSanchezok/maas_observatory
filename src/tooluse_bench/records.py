@@ -79,7 +79,7 @@ class TaskResult(StrictModel):
     status: TaskStatus
     score: float | None = Field(default=None, ge=0, le=1)
     metrics: dict[str, float] = Field(default_factory=dict)
-    latency_seconds: float = Field(ge=0)
+    latency_seconds: float | None = Field(default=None, ge=0)
     attempts: int = Field(default=1, ge=0)
     request: dict[str, Any] | None = None
     response: dict[str, Any] | None = None
@@ -103,6 +103,7 @@ class RunManifest(StrictModel):
     platform: str
     configuration_sha256: str
     dependency_lock_sha256: str
+    dependency_locks_sha256: dict[str, str] = Field(default_factory=dict)
     catalog_path: str
     experiment_path: str
     output_directory: Path
@@ -128,7 +129,7 @@ def result_from_spec(
     status: TaskStatus,
     started_at: datetime,
     finished_at: datetime,
-    latency_seconds: float,
+    latency_seconds: float | None,
     score: float | None = None,
     metrics: dict[str, float] | None = None,
     attempts: int = 1,

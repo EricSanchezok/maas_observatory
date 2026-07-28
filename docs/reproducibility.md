@@ -29,6 +29,19 @@ a report.
 
 ## Execute
 
+Validate the actual pinned BFCL runtime on its bounded harness smoke before a
+costly release run:
+
+```bash
+uv run tooluse-bench run \
+  --experiment config/experiments/bfcl-harness-smoke.yaml
+```
+
+The smoke uses one deployment, one trial, three subsets, and a limit of three.
+It is a harness validation artifact, not a publishable model score.
+
+Then execute the complete plan:
+
 ```bash
 uv run tooluse-bench run \
   --experiment config/experiments/release-v1.yaml
@@ -36,9 +49,10 @@ uv run tooluse-bench run \
 
 The run manifest records the Git commit, dirty-worktree flag, package and
 Python versions, platform, benchmark revisions, selected deployments, lanes,
-and SHA-256 digests of configuration and dependency locks. Task records are
-appended to JSONL and fsynced. Finalization writes the record count, status
-counts, and result-file hash.
+and SHA-256 digests of configuration and every root/isolated dependency lock.
+It also records one combined lock digest. Task records are appended to JSONL
+and fsynced. Finalization writes the record count, status counts, and
+result-file hash.
 
 Reporting refuses a run without `completion.json` and rechecks the result hash,
 record count, status counts, and run IDs. Adapter records are appended as soon

@@ -93,9 +93,17 @@
       "$ref": "#/$defs/Lane"
     },
     "latency_seconds": {
-      "minimum": 0,
-      "title": "Latency Seconds",
-      "type": "number"
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Latency Seconds"
     },
     "metrics": {
       "additionalProperties": {
@@ -211,7 +219,6 @@
     "trial",
     "seed",
     "status",
-    "latency_seconds",
     "started_at",
     "finished_at"
   ],

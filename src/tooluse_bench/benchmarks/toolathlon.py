@@ -303,7 +303,12 @@ class ToolathlonAdapter(BenchmarkAdapter):
                 score=score,
                 started_at=started_at,
                 finished_at=finished_at,
-                latency_seconds=float(evaluation.get("duration_seconds", 0)),
+                latency_seconds=(
+                    float(evaluation["duration_seconds"])
+                    if isinstance(evaluation.get("duration_seconds"), int | float)
+                    and not isinstance(evaluation["duration_seconds"], bool)
+                    else None
+                ),
                 response={"evaluation": evaluation},
                 error_category=category,
                 error_detail=detail,
