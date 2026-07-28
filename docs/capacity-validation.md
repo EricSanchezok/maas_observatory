@@ -20,11 +20,19 @@ setting.
 - Private result SHA-256:
   `78d136ed0e0d375d46d2d8d6d94efc6301526cfe743a4dbe4c4daaa7db689669`
 
-The protocol fixed `batch_size=25`, `request_timeout_seconds=180`,
-`sdk_max_retries=2`, and a 1,800-second outer process deadline. Two requests in
-the irrelevance subset crossed the first 180-second boundary; both eventually
-completed after retry. Compared with the earlier ten-way development
-diagnostic, effective throughput improved by about 72%, but the observed long
-tail means a simple linear full-run time estimate is only a lower-bound
-capacity check. Multi-turn, memory, and web-search tasks can require additional
-model or tool interactions.
+The experiment declared `batch_size=25`, `request_timeout_seconds=180`,
+`sdk_max_retries=2`, and a 1,800-second outer process deadline. A subsequent
+source audit found that the pinned EvalScope BFCL adapter instantiated a second
+OpenAI client inside `bfcl_eval`: the batch size was effective, but the declared
+request timeout and retry settings were not forwarded to that client. Its SDK
+default happened to use two retries, while its request timeout remained an
+implicit default. Therefore this run validates only the 25-way capacity choice,
+not the formal transport bounds.
+
+The harness now injects the declared timeout and retry maximum into that exact
+BFCL client, disables its separate stop-never RateLimit backoff, and records the
+effective policy in a releaseable execution audit. Compared with the earlier
+ten-way development diagnostic, effective throughput improved by about 72%,
+but the observed long tail means a simple linear full-run time estimate is only
+a lower-bound capacity check. Multi-turn, memory, and web-search tasks can
+require additional model or tool interactions.

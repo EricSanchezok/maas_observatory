@@ -84,8 +84,12 @@ subset before continuing.
 
 BFCL formal runs also record `batch_size`, `request_timeout_seconds`, and
 `sdk_max_retries` (capped at two). These are passed to EvalScope and its
-OpenAI-compatible client. SDK retries apply only to transport/status failures,
-not to incorrect model content. The official-comparison BFCL result is one full
+BFCL OpenAI-compatible handler. The wrapper disables the pinned upstream
+handler's unbounded RateLimitError backoff and relies on the explicitly bounded
+OpenAI SDK policy. SDK retries apply only to transport/status failures, not to
+incorrect model content. Upstream inference exceptions embedded in scored
+review records are normalized as transport, timeout, or infrastructure errors,
+never as capability failures. The official-comparison BFCL result is one full
 run, matching leaderboard practice; repeatability is measured separately
 instead of changing the primary score into an unofficial three-run mean.
 

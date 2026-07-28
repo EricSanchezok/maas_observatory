@@ -16,6 +16,35 @@ from evalscope import TaskConfig, run_task
 from normalize import normalize_outputs
 
 
+def _configure_bounded_bfcl_transport(spec: dict[str, Any]) -> None:
+    """Bound the pinned BFCL handler's otherwise unbounded retry policy."""
+
+    from bfcl_eval.model_handler.api_inference.openai_completion import (
+        OpenAICompletionsHandler,
+    )
+
+    original_build_client_kwargs = OpenAICompletionsHandler._build_client_kwargs
+    original_generate = getattr(
+        OpenAICompletionsHandler.generate_with_backoff,
+        "__wrapped__",
+        None,
+    )
+    if original_generate is None:
+        raise RuntimeError("pinned BFCL retry wrapper is not inspectable")
+
+    def bounded_client_kwargs(self: Any) -> dict[str, Any]:
+        kwargs: dict[str, Any] = original_build_client_kwargs(self)
+        kwargs["max_retries"] = spec["sdk_max_retries"]
+        kwargs["timeout"] = spec["request_timeout_seconds"]
+        return kwargs
+
+    OpenAICompletionsHandler._build_client_kwargs = bounded_client_kwargs
+    # The upstream handler wraps RateLimitError in a stop-never Tenacity policy.
+    # The OpenAI SDK already retries rate limits and transport failures, so use
+    # the unwrapped method and enforce the explicit SDK maximum above.
+    OpenAICompletionsHandler.generate_with_backoff = original_generate
+
+
 def _task_config(
     spec: dict[str, Any],
     *,
@@ -66,6 +95,7 @@ def main() -> int:
         raise SystemExit("usage: run_eval.py SPEC.json")
     spec_path = Path(sys.argv[1]).resolve()
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    _configure_bounded_bfcl_transport(spec)
     output_root = Path(spec["output_root"]).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     result_path = output_root / "adapter-results.jsonl"

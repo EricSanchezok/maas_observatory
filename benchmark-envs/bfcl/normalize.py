@@ -7,6 +7,24 @@ import math
 from pathlib import Path
 from typing import Any
 
+ERROR_MARKERS = ("error", "error_message")
+TIMEOUT_MARKERS = (
+    "timeout",
+    "timed out",
+    "apitimeouterror",
+    "readtimeout",
+    "connecttimeout",
+)
+TRANSPORT_MARKERS = (
+    "connection error",
+    "apiconnectionerror",
+    "connecterror",
+    "ratelimiterror",
+    "rate limit",
+    "apistatuserror",
+    "internalservererror",
+)
+
 
 def _object(value: Any, *, location: str) -> dict[str, Any]:
     if not isinstance(value, dict):
@@ -62,6 +80,41 @@ def _sample_id(
     return f"{subset}/{value}"
 
 
+def _inference_error(
+    record: dict[str, Any],
+    *,
+    location: str,
+) -> tuple[str, str] | None:
+    sample_score = _object(
+        record.get("sample_score"), location=f"{location}.sample_score"
+    )
+    score = _object(
+        sample_score.get("score"), location=f"{location}.sample_score.score"
+    )
+    for field in ("prediction", "extracted_prediction"):
+        value = score.get(field)
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(value, dict) or not all(
+            key in value for key in ERROR_MARKERS
+        ):
+            continue
+        message = str(value.get("error") or "BFCL inference failed")
+        traceback_text = str(value.get("error_message") or "")
+        searchable = f"{message}\n{traceback_text}".lower()
+        if any(marker in searchable for marker in TIMEOUT_MARKERS):
+            category = "timeout"
+        elif any(marker in searchable for marker in TRANSPORT_MARKERS):
+            category = "transport"
+        else:
+            category = "infrastructure"
+        return category, message[:1000]
+    return None
+
+
 def normalize_outputs(
     output_root: Path,
     expected_subsets: list[str],
@@ -98,14 +151,16 @@ def normalize_outputs(
             if task_id in seen:
                 raise ValueError(f"duplicate BFCL task identity: {task_id}")
             seen.add(task_id)
-            subset_records.append(
-                {
-                    "task_id": task_id,
-                    "score": _sample_score(record, location=location),
-                    "source_path": str(path.relative_to(output_root)),
-                    "record": record,
-                }
-            )
+            normalized_record = {
+                "task_id": task_id,
+                "score": _sample_score(record, location=location),
+                "source_path": str(path.relative_to(output_root)),
+                "record": record,
+            }
+            if inference_error := _inference_error(record, location=location):
+                normalized_record["error_category"] = inference_error[0]
+                normalized_record["error_detail"] = inference_error[1]
+            subset_records.append(normalized_record)
         if not subset_records:
             raise ValueError(f"BFCL review file is empty: {path}")
         normalized.extend(sorted(subset_records, key=lambda item: item["task_id"]))

@@ -85,6 +85,42 @@ def test_normalizer_reads_only_stable_per_sample_reviews(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize(
+    ("message", "traceback_text", "category"),
+    [
+        (
+            "Connection error.",
+            "openai.APIConnectionError caused by httpx.ConnectError",
+            "transport",
+        ),
+        ("Request timed out.", "openai.APITimeoutError", "timeout"),
+        ("Unexpected inference failure.", "RuntimeError", "infrastructure"),
+    ],
+)
+def test_normalizer_separates_inference_errors_from_capability_failures(
+    tmp_path: Path,
+    message: str,
+    traceback_text: str,
+    category: str,
+) -> None:
+    module = load_normalizer()
+    record = review_record(
+        subset="simple_python",
+        sample_id="simple_python_0",
+        score=0,
+    )
+    record["sample_score"]["score"]["prediction"] = json.dumps(
+        {"error": message, "error_message": traceback_text}
+    )
+    write_reviews(tmp_path, subset="simple_python", records=[record])
+
+    [result] = module.normalize_outputs(tmp_path, ["simple_python"])
+
+    assert result["score"] == 0
+    assert result["error_category"] == category
+    assert result["error_detail"] == message
+
+
+@pytest.mark.parametrize(
     ("mutate", "message"),
     [
         (

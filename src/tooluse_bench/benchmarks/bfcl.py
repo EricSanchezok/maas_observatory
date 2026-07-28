@@ -209,6 +209,7 @@ class BFCLAdapter(BenchmarkAdapter):
                 "process_return_code": outcome.return_code,
                 "process_wall_seconds": outcome.wall_seconds,
                 "observed_sdk_retry_log_count": stderr_text.count("Retrying request"),
+                "upstream_unbounded_rate_limit_retry_disabled": True,
             },
         )
         audit_path.write_text(
@@ -249,6 +250,31 @@ class BFCLAdapter(BenchmarkAdapter):
                 if not line.strip():
                     continue
                 raw: dict[str, Any] = json.loads(line)
+                raw_error_category = raw.get("error_category")
+                if isinstance(raw_error_category, str):
+                    yield result_from_spec(
+                        context.spec,
+                        task_id=str(raw.get("task_id", f"record-{line_number}")),
+                        status=TaskStatus.ERROR,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        latency_seconds=None,
+                        attempts=1,
+                        error_category=ErrorCategory(raw_error_category),
+                        error_detail=str(
+                            raw.get("error_detail", "BFCL inference failed")
+                        ),
+                        response={
+                            "upstream_error": str(
+                                raw.get("error_detail", "BFCL inference failed")
+                            )
+                        },
+                        artifact_paths=(
+                            str(normalized_path.relative_to(context.workspace)),
+                            str(raw.get("source_path", "")),
+                        ),
+                    )
+                    continue
                 score = float(raw["score"])
                 yield result_from_spec(
                     context.spec,

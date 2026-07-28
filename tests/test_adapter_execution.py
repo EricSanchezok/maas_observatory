@@ -232,6 +232,16 @@ def test_bfcl_adapter_normalizes_results_and_failures(tmp_path: Path) -> None:
                         }
                     ),
                     json.dumps({"score": 0, "record": {}}),
+                    json.dumps(
+                        {
+                            "task_id": "transport-task",
+                            "score": 0,
+                            "error_category": "transport",
+                            "error_detail": "Connection error.",
+                            "record": {"private_traceback": "omitted from result"},
+                            "source_path": "source-c",
+                        }
+                    ),
                 ]
             ),
             encoding="utf-8",
@@ -259,8 +269,17 @@ def test_bfcl_adapter_normalizes_results_and_failures(tmp_path: Path) -> None:
         TaskStatus.PASS,
         TaskStatus.FAIL,
         TaskStatus.ERROR,
+        TaskStatus.ERROR,
     ]
-    assert [result.latency_seconds for result in results] == [0.5, None, None]
+    assert [result.latency_seconds for result in results] == [
+        0.5,
+        None,
+        None,
+        None,
+    ]
+    assert results[2].error_category is ErrorCategory.TRANSPORT
+    assert results[2].response == {"upstream_error": "Connection error."}
+    assert "private_traceback" not in json.dumps(results[2].response)
     assert results[-1].task_id == "__subset__/web_search_base"
     spec = json.loads(
         (adapter_context.workspace / "bfcl-spec.json").read_text(encoding="utf-8")
