@@ -15,6 +15,10 @@ SENSITIVE_KEY = re.compile(
     r"(authorization|api[_-]?key|access[_-]?token|secret|password)",
     re.IGNORECASE,
 )
+SENSITIVE_ENVIRONMENT_NAME = re.compile(
+    r"(?:API[_-]?KEY|ACCESS[_-]?TOKEN|SECRET|PASSWORD)$",
+    re.IGNORECASE,
+)
 BEARER_TOKEN = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}")
 COMMON_KEY_TOKEN = re.compile(r"\b(?:sk|key)-[A-Za-z0-9_-]{12,}\b")
 ABSOLUTE_USER_PATH = re.compile(r"(?:/Users|/home)/[^/\s\"']+")
@@ -37,6 +41,11 @@ class Redactor:
             ):
                 if value := os.getenv(name):
                     values.add(value)
+        for name, value in os.environ.items():
+            if value and SENSITIVE_ENVIRONMENT_NAME.search(name):
+                values.add(value)
+        if value := os.getenv("TOOLATHLON_SERVER_HOST"):
+            values.add(value)
         replacements = []
         for value in sorted(values, key=len, reverse=True):
             if value == str(PROJECT_ROOT):

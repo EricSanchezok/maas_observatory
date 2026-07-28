@@ -24,6 +24,14 @@
         "comparability": {
           "$ref": "#/$defs/Comparability"
         },
+        "compatible_configurations_sha256": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Compatible Configurations Sha256",
+          "type": "array"
+        },
         "compatible_deployments": {
           "default": [],
           "items": {

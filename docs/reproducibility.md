@@ -99,13 +99,25 @@ instead of changing the primary score into an unofficial three-run mean.
 uv run tooluse-bench report build <run-id>
 uv run tooluse-bench release build <run-id>
 uv run tooluse-bench release validate <run-id>
+uv run tooluse-bench publication build <run-id> \
+  --title "Release candidate"
+uv run tooluse-bench publication validate
 ```
 
 The release builder verifies the private completion hash, recursively redacts
 known secrets and private paths, validates every sanitized task record, creates
 file checksums, and produces a deterministic tar archive. The release metadata
 retains both the private source-result hash and the published compressed-result
-hash without exposing the private contents.
+hash without exposing the private contents. Report and release metadata also
+record the builder commit, dirty-worktree state, package version, configuration
+hash, and baseline-registry content hash. This distinguishes the code that ran
+the benchmark from the potentially newer code that derived and packaged the
+report.
+
+The publication builder accepts only a validated release directory and its
+matching deterministic archive. It derives the lightweight snapshot, verifies
+all cross-file identities and checksums, updates the public index atomically,
+and regenerates the results page when using the repository default output.
 
 Before upload, inspect the complete staging directory manually and record the
 archive SHA-256 in the GitHub Release notes.

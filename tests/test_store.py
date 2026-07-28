@@ -74,6 +74,8 @@ def test_store_is_append_only_and_finalization_is_verifiable(tmp_path: Path) -> 
         latency_seconds=0,
     )
     store.append(result)
+    with pytest.raises(ValueError, match="duplicate task result identity"):
+        store.append(result)
     completion = store.finalize()
 
     assert completion.result_count == 1

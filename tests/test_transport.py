@@ -184,7 +184,7 @@ def test_transport_wall_worker_returns_response_and_transport_error() -> None:
             wall_timeout_seconds=2,
         ).chat_completion({})
     assert captured.value.category is ErrorCategory.TRANSPORT
-    assert "TransportError" in str(captured.value)
+    assert "ConnectError" in str(captured.value)
 
 
 @pytest.mark.parametrize(

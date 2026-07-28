@@ -239,7 +239,7 @@ class OpenAITransport:
                     self._backoff(attempts)
                     continue
                 raise TransportFailure(
-                    f"transport error: {type(exc).__name__}",
+                    f"transport error: {exc}",
                     category=ErrorCategory.TRANSPORT,
                     attempts=attempts,
                 ) from exc

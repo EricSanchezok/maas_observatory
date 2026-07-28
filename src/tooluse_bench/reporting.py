@@ -14,16 +14,47 @@ from typing import Literal
 
 from pydantic import Field
 
+from tooluse_bench import __version__
 from tooluse_bench.baselines import BaselineRegistry, Comparability
 from tooluse_bench.config import load_baselines
 from tooluse_bench.domain import Lane, StrictModel
+from tooluse_bench.provenance import git_state
 from tooluse_bench.records import (
+    ErrorCategory,
     RunCompletion,
     RunManifest,
     TaskResult,
     TaskStatus,
 )
-from tooluse_bench.store import sha256_file
+from tooluse_bench.store import canonical_json, sha256_file
+
+
+class ReportMetadata(StrictModel):
+    schema_version: Literal[1] = 1
+    run_id: str
+    run_git_commit: str
+    source_results_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    report_builder_git_commit: str
+    report_builder_git_dirty: bool
+    report_builder_package_version: str
+    baseline_registry_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class TaskGroupAggregate(StrictModel):
+    schema_version: Literal[1] = 1
+    group_id: str
+    complete: bool = True
+    expected_trials: int = Field(ge=1)
+    task_count: int = Field(ge=0)
+    record_count: int = Field(ge=0)
+    pass_at_1: float | None = Field(default=None, ge=0, le=1)
+    pass_at_3: float | None = Field(default=None, ge=0, le=1)
+    pass_pow_3: float | None = Field(default=None, ge=0, le=1)
+    pass_at_1_ci_low: float | None = Field(default=None, ge=0, le=1)
+    pass_at_1_ci_high: float | None = Field(default=None, ge=0, le=1)
+    error_rate: float | None = Field(default=None, ge=0, le=1)
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    error_categories: dict[str, int] = Field(default_factory=dict)
 
 
 class AggregateResult(StrictModel):
@@ -34,6 +65,7 @@ class AggregateResult(StrictModel):
     lane: Lane
     deployment_id: str
     model_alias: str
+    complete: bool = True
     expected_trials: int = Field(ge=1)
     task_count: int = Field(ge=0)
     record_count: int = Field(ge=0)
@@ -54,6 +86,7 @@ class AggregateResult(StrictModel):
     exact_baseline_id: str | None = None
     exact_baseline_score: float | None = None
     official_delta: float | None = None
+    task_groups: tuple[TaskGroupAggregate, ...] = ()
 
 
 def load_results(path: Path) -> list[TaskResult]:
@@ -164,7 +197,11 @@ def _exact_baseline(
     benchmark_id: str,
     benchmark_version: str,
     deployment_id: str,
+    lane: Lane,
+    configuration_sha256: str | None,
 ) -> tuple[str, float] | None:
+    if lane is not Lane.OFFICIAL_REPRODUCTION or configuration_sha256 is None:
+        return None
     matches = [
         item
         for item in baselines.baselines
@@ -173,6 +210,7 @@ def _exact_baseline(
         and item.benchmark_release == benchmark_version
         and item.metric == "pass_at_1"
         and deployment_id in item.compatible_deployments
+        and configuration_sha256 in item.compatible_configurations_sha256
     ]
     if len(matches) > 1:
         raise ValueError(
@@ -183,10 +221,129 @@ def _exact_baseline(
     return matches[0].baseline_id, matches[0].score / 100
 
 
+def _task_statistics(
+    records: list[TaskResult],
+    *,
+    expected_trials: int,
+    seed_material: str,
+) -> tuple[
+    int,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+]:
+    task_records: dict[str, list[TaskResult]] = defaultdict(list)
+    for record in records:
+        if record.status is not TaskStatus.NOT_RUN and not record.task_id.startswith(
+            "__"
+        ):
+            task_records[record.task_id].append(record)
+    successes = [
+        [float(item.status is TaskStatus.PASS) for item in task_records[task_id]]
+        for task_id in sorted(task_records)
+    ]
+    pass_at_1 = (
+        mean(value for task in successes for value in task) if successes else None
+    )
+    pass_at_3 = (
+        mean(float(any(task)) for task in successes)
+        if successes and expected_trials == 3
+        else None
+    )
+    pass_pow_3 = (
+        mean(float(len(task) == expected_trials and all(task)) for task in successes)
+        if successes and expected_trials == 3
+        else None
+    )
+    ci_low, ci_high = _bootstrap_ci(
+        successes,
+        seed_material=seed_material,
+    )
+    return (
+        len(task_records),
+        pass_at_1,
+        pass_at_3,
+        pass_pow_3,
+        ci_low,
+        ci_high,
+    )
+
+
+def _task_group_aggregates(
+    records: list[TaskResult],
+    *,
+    expected_trials: int,
+    seed_material: str,
+) -> tuple[TaskGroupAggregate, ...]:
+    task_groups: dict[str, list[TaskResult]] = defaultdict(list)
+    subset_failures: set[str] = set()
+    for record in records:
+        if record.task_id.startswith("__subset__/"):
+            subset_failures.add(record.task_id.split("/", 1)[1])
+            continue
+        if record.task_id.startswith("__") or "/" not in record.task_id:
+            continue
+        task_groups[record.task_id.split("/", 1)[0]].append(record)
+
+    output: list[TaskGroupAggregate] = []
+    for group_id in sorted(set(task_groups) | subset_failures):
+        group_records = task_groups.get(group_id, [])
+        (
+            task_count,
+            pass_at_1,
+            pass_at_3,
+            pass_pow_3,
+            ci_low,
+            ci_high,
+        ) = _task_statistics(
+            group_records,
+            expected_trials=expected_trials,
+            seed_material=f"{seed_material}:{group_id}",
+        )
+        evaluated = [
+            item for item in group_records if item.status is not TaskStatus.NOT_RUN
+        ]
+        status_counts = Counter(item.status.value for item in group_records)
+        if group_id in subset_failures:
+            status_counts[TaskStatus.ERROR.value] += 1
+        error_categories = Counter(
+            item.error_category.value
+            for item in group_records
+            if item.error_category is not ErrorCategory.NONE
+        )
+        if group_id in subset_failures:
+            error_categories[ErrorCategory.INFRASTRUCTURE.value] += 1
+        denominator = len(evaluated) + int(group_id in subset_failures)
+        error_count = sum(item.status is TaskStatus.ERROR for item in evaluated) + int(
+            group_id in subset_failures
+        )
+        output.append(
+            TaskGroupAggregate(
+                group_id=group_id,
+                complete=group_id not in subset_failures,
+                expected_trials=expected_trials,
+                task_count=task_count,
+                record_count=denominator,
+                pass_at_1=pass_at_1,
+                pass_at_3=pass_at_3,
+                pass_pow_3=pass_pow_3,
+                pass_at_1_ci_low=ci_low,
+                pass_at_1_ci_high=ci_high,
+                error_rate=error_count / denominator if denominator else None,
+                status_counts=dict(sorted(status_counts.items())),
+                error_categories=dict(sorted(error_categories.items())),
+            )
+        )
+    return tuple(output)
+
+
 def aggregate_results(
     results: list[TaskResult],
     *,
     baselines: BaselineRegistry | None = None,
+    configuration_sha256: str | None = None,
 ) -> list[AggregateResult]:
     registry = baselines or load_baselines()
     grouped: dict[tuple[str, str, str, str, str, str], list[TaskResult]] = defaultdict(
@@ -215,33 +372,16 @@ def aggregate_results(
             model_alias,
         ) = key
         expected_trials = max(item.trial for item in records)
-        task_records: dict[str, list[TaskResult]] = defaultdict(list)
-        for record in records:
-            if record.task_id != "__benchmark__" and (
-                record.status is not TaskStatus.NOT_RUN
-            ):
-                task_records[record.task_id].append(record)
-        successes = [
-            [float(item.status is TaskStatus.PASS) for item in task_records[task_id]]
-            for task_id in sorted(task_records)
-        ]
-        pass_at_1 = (
-            mean(value for task in successes for value in task) if successes else None
-        )
-        pass_at_3 = (
-            mean(float(any(task)) for task in successes)
-            if successes and expected_trials == 3
-            else None
-        )
-        pass_pow_3 = (
-            mean(
-                float(len(task) == expected_trials and all(task)) for task in successes
-            )
-            if successes and expected_trials == 3
-            else None
-        )
-        ci_low, ci_high = _bootstrap_ci(
-            successes,
+        (
+            task_count,
+            pass_at_1,
+            pass_at_3,
+            pass_pow_3,
+            ci_low,
+            ci_high,
+        ) = _task_statistics(
+            records,
+            expected_trials=expected_trials,
             seed_material=":".join(key),
         )
         evaluated = [item for item in records if item.status is not TaskStatus.NOT_RUN]
@@ -273,6 +413,8 @@ def aggregate_results(
             benchmark_id=benchmark_id,
             benchmark_version=benchmark_version,
             deployment_id=deployment_id,
+            lane=Lane(lane_value),
+            configuration_sha256=configuration_sha256,
         )
         exact_baseline_id = baseline[0] if baseline else None
         exact_baseline_score = baseline[1] if baseline else None
@@ -284,8 +426,13 @@ def aggregate_results(
                 lane=Lane(lane_value),
                 deployment_id=deployment_id,
                 model_alias=model_alias,
+                complete=not any(
+                    item.task_id.startswith("__")
+                    and item.status in {TaskStatus.ERROR, TaskStatus.NOT_RUN}
+                    for item in records
+                ),
                 expected_trials=expected_trials,
-                task_count=len(task_records),
+                task_count=task_count,
                 record_count=len(records),
                 pass_at_1=pass_at_1,
                 pass_at_3=pass_at_3,
@@ -310,6 +457,15 @@ def aggregate_results(
                     if pass_at_1 is not None and exact_baseline_score is not None
                     else None
                 ),
+                task_groups=(
+                    _task_group_aggregates(
+                        records,
+                        expected_trials=expected_trials,
+                        seed_material=":".join(key),
+                    )
+                    if benchmark_id == "bfcl-v4"
+                    else ()
+                ),
             )
         )
     return aggregates
@@ -323,6 +479,7 @@ def render_markdown_report(
     manifest: RunManifest,
     aggregates: list[AggregateResult],
     baselines: BaselineRegistry,
+    metadata: ReportMetadata,
 ) -> str:
     lines = [
         f"# SII Holos Tool-use Evaluation — `{manifest.run_id}`",
@@ -330,6 +487,10 @@ def render_markdown_report(
         "## Provenance",
         "",
         f"- Git commit: `{manifest.git_commit}`",
+        f"- Report builder commit: `{metadata.report_builder_git_commit}`",
+        "- Report builder working tree dirty: "
+        f"`{str(metadata.report_builder_git_dirty).lower()}`",
+        f"- Baseline registry SHA-256: `{metadata.baseline_registry_sha256}`",
         f"- Working tree dirty at launch: `{str(manifest.git_dirty).lower()}`",
         f"- Created at: `{manifest.created_at.isoformat()}`",
         f"- Configuration SHA-256: `{manifest.configuration_sha256}`",
@@ -342,8 +503,8 @@ def render_markdown_report(
         "## Results",
         "",
         "| Benchmark | Lane | Deployment | Tasks | Pass@1 | 95% CI "
-        "| Pass@3 | Pass^3 | Error rate |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|",
+        "| Pass@3 | Pass^3 | Error rate | Coverage |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for item in aggregates:
         ci = (
@@ -366,6 +527,7 @@ def render_markdown_report(
                     _display_percentage(item.pass_at_3),
                     _display_percentage(item.pass_pow_3),
                     _display_percentage(item.error_rate),
+                    "complete" if item.complete else "partial / not run",
                 )
             )
             + " |"
@@ -373,8 +535,48 @@ def render_markdown_report(
     lines.extend(
         [
             "",
-            "No cross-benchmark composite score is calculated. A missing value means "
-            "the lane did not produce comparable task-level observations.",
+            "Pass@1 is the observed task-level result. `partial / not run` means "
+            "one or more benchmark/subset sentinels reported missing evidence; "
+            "the observed score must not be interpreted as complete coverage.",
+            "",
+            "No cross-benchmark composite score is calculated. A missing value "
+            "means the lane did not produce comparable task-level observations.",
+            "",
+            "## BFCL subset results",
+            "",
+            "| Deployment | Subset | Tasks | Pass@1 | 95% CI | Error rate | Coverage |",
+            "|---|---|---:|---:|---:|---:|---|",
+        ]
+    )
+    for item in aggregates:
+        for group in item.task_groups:
+            ci = (
+                "—"
+                if group.pass_at_1_ci_low is None or group.pass_at_1_ci_high is None
+                else (
+                    f"{group.pass_at_1_ci_low * 100:.1f}-"
+                    f"{group.pass_at_1_ci_high * 100:.1f}%"
+                )
+            )
+            lines.append(
+                "| "
+                + " | ".join(
+                    (
+                        item.model_alias,
+                        group.group_id,
+                        str(group.task_count),
+                        _display_percentage(group.pass_at_1),
+                        ci,
+                        _display_percentage(group.error_rate),
+                        "complete" if group.complete else "partial",
+                    )
+                )
+                + " |"
+            )
+    if not any(item.task_groups for item in aggregates):
+        lines.append("| — | — | 0 | — | — | — | not evaluated |")
+    lines.extend(
+        [
             "",
             "## Official and published context",
             "",
@@ -446,15 +648,41 @@ def build_report(
     *,
     baselines: BaselineRegistry | None = None,
 ) -> Path:
-    manifest, _, results = load_completed_run(run_directory)
+    manifest, completion, results = load_completed_run(run_directory)
     registry = baselines or load_baselines()
-    aggregates = aggregate_results(results, baselines=registry)
+    builder_commit, builder_dirty = git_state()
+    baseline_registry_sha256 = hashlib.sha256(
+        canonical_json(registry.model_dump(mode="json")).encode()
+    ).hexdigest()
+    metadata = ReportMetadata(
+        run_id=manifest.run_id,
+        run_git_commit=manifest.git_commit,
+        source_results_sha256=completion.results_sha256,
+        report_builder_git_commit=builder_commit,
+        report_builder_git_dirty=builder_dirty,
+        report_builder_package_version=__version__,
+        baseline_registry_sha256=baseline_registry_sha256,
+    )
+    aggregates = aggregate_results(
+        results,
+        baselines=registry,
+        configuration_sha256=manifest.configuration_sha256,
+    )
     report_directory = run_directory / "report"
     report_directory.mkdir(exist_ok=False)
 
     metrics_payload = [item.model_dump(mode="json") for item in aggregates]
     (report_directory / "metrics.json").write_text(
         json.dumps(metrics_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (report_directory / "report-metadata.json").write_text(
+        json.dumps(
+            metadata.model_dump(mode="json"),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     fieldnames = list(AggregateResult.model_fields)
@@ -468,9 +696,10 @@ def build_report(
             row["error_categories"] = json.dumps(
                 row["error_categories"], sort_keys=True
             )
+            row["task_groups"] = json.dumps(row["task_groups"], sort_keys=True)
             writer.writerow(row)
     (report_directory / "report.md").write_text(
-        render_markdown_report(manifest, aggregates, registry),
+        render_markdown_report(manifest, aggregates, registry, metadata),
         encoding="utf-8",
     )
     return report_directory

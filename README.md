@@ -98,11 +98,15 @@ uv run tooluse-bench run \
 uv run tooluse-bench report build <run-id>
 uv run tooluse-bench release build <run-id>
 uv run tooluse-bench release validate <run-id>
+uv run tooluse-bench publication build <run-id> \
+  --title "Release candidate"
+uv run tooluse-bench publication validate
 ```
 
 Private runs are append-only under `runs/` and never tracked. A release bundle
 contains sanitized trajectories, a manifest, completion record, aggregate
-metrics, adapter execution audits, report, data license, and SHA-256 checksums.
+metrics, adapter execution audits, report, report-builder provenance, data
+license, and SHA-256 checksums.
 Execution audits disclose resource controls, process outcomes, and observable
 SDK retry counts without publishing credentials or endpoint URLs. The
 deterministic archive can be attached to an immutable GitHub Release.
@@ -113,6 +117,12 @@ record counts, timestamps, checksums, secret scan, and generated results page.
 Each snapshot also retains the source release's checksum manifest plus its
 exact report and metrics, so derived summaries are traceable to the archive.
 The complete sanitized trajectories remain only in that release archive.
+
+Model-catalog `profiles` describe candidate serving or reasoning modes supplied
+by the operator. They are not silently activated by the harness. A published
+experiment must encode every active request parameter in its benchmark options
+or identify the server-side mode as unknown; catalog metadata alone is not
+evidence that a profile was reproduced.
 
 ## Official comparisons
 

@@ -69,6 +69,7 @@ def test_report_and_release_commands_delegate(tmp_path: Path) -> None:
     archive = tmp_path / "releases" / "run-id.tar.gz"
     run_directory.mkdir(parents=True)
     release_directory.mkdir(parents=True)
+    archive.touch()
 
     with patch(
         "tooluse_bench.cli.build_report",
@@ -126,6 +127,66 @@ def test_report_and_release_commands_delegate(tmp_path: Path) -> None:
         )
     assert validate.exit_code == 0
     validate_release.assert_called_once_with(release_directory.resolve())
+
+    snapshot = tmp_path / "public" / "run-id"
+    with (
+        patch("tooluse_bench.cli.load_dotenv"),
+        patch(
+            "tooluse_bench.cli.build_public_snapshot",
+            return_value=snapshot,
+        ) as build_public_snapshot,
+    ):
+        publication = runner.invoke(
+            app,
+            [
+                "publication",
+                "build",
+                "run-id",
+                "--title",
+                "Release candidate",
+                "--releases-root",
+                str(tmp_path / "releases"),
+                "--archive",
+                str(archive),
+                "--output-root",
+                str(tmp_path / "public"),
+                "--note",
+                "No remote is configured.",
+            ],
+        )
+    assert publication.exit_code == 0
+    build_public_snapshot.assert_called_once_with(
+        release_directory.resolve(),
+        archive,
+        title="Release candidate",
+        status="candidate",
+        release_url=None,
+        notes=("No remote is configured.",),
+        root=tmp_path / "public",
+    )
+
+    with (
+        patch("tooluse_bench.cli.load_dotenv"),
+        patch(
+            "tooluse_bench.cli.validate_public_results",
+            return_value=(
+                type("Index", (), {"latest_run_id": "run-id"})(),
+                {"run-id": ()},
+            ),
+        ) as validate_public_results,
+    ):
+        publication_validate = runner.invoke(
+            app,
+            [
+                "publication",
+                "validate",
+                "--root",
+                str(tmp_path / "public"),
+            ],
+        )
+    assert publication_validate.exit_code == 0
+    assert "latest=run-id" in publication_validate.stdout
+    validate_public_results.assert_called_once_with(tmp_path / "public")
 
 
 def test_directory_resolution_and_main(tmp_path: Path) -> None:

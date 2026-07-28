@@ -16,6 +16,13 @@ from tooluse_bench.config import (
     load_experiment,
     load_model_catalog,
 )
+from tooluse_bench.publication import (
+    PUBLIC_RESULTS_ROOT,
+    SnapshotStatus,
+    build_public_snapshot,
+    validate_public_results,
+    write_public_results_markdown,
+)
 from tooluse_bench.registry import BenchmarkRegistry
 from tooluse_bench.release import build_release, validate_release
 from tooluse_bench.reporting import build_report
@@ -30,10 +37,12 @@ models_app = typer.Typer(help="Inspect and validate model deployments.")
 benchmarks_app = typer.Typer(help="Inspect and validate benchmark adapters.")
 report_app = typer.Typer(help="Build deterministic reports from private runs.")
 release_app = typer.Typer(help="Build and validate sanitized release bundles.")
+publication_app = typer.Typer(help="Build validated lightweight public snapshots.")
 app.add_typer(models_app, name="models")
 app.add_typer(benchmarks_app, name="benchmarks")
 app.add_typer(report_app, name="report")
 app.add_typer(release_app, name="release")
+app.add_typer(publication_app, name="publication")
 console = Console()
 
 
@@ -177,6 +186,47 @@ def release_validate(
     directory = _resolve_directory(release_id, releases_root)
     validate_release(directory)
     console.print(f"[green]Release is valid:[/green] {directory}")
+
+
+@publication_app.command("build")
+def publication_build(
+    release_id: str,
+    title: Annotated[str, typer.Option(help="Public snapshot title.")],
+    releases_root: Annotated[Path, typer.Option()] = Path("release-staging"),
+    archive: Annotated[Path | None, typer.Option(exists=True)] = None,
+    output_root: Annotated[Path, typer.Option()] = PUBLIC_RESULTS_ROOT,
+    status: Annotated[SnapshotStatus, typer.Option()] = SnapshotStatus.CANDIDATE,
+    release_url: Annotated[str | None, typer.Option()] = None,
+    note: Annotated[list[str] | None, typer.Option()] = None,
+) -> None:
+    load_dotenv()
+    release_directory = _resolve_directory(release_id, releases_root)
+    archive_path = (
+        archive or release_directory.parent / f"{release_directory.name}.tar.gz"
+    )
+    snapshot = build_public_snapshot(
+        release_directory,
+        archive_path,
+        title=title,
+        status=status,
+        release_url=release_url,
+        notes=tuple(note or ()),
+        root=output_root,
+    )
+    if output_root.resolve() == PUBLIC_RESULTS_ROOT.resolve():
+        write_public_results_markdown()
+    console.print(f"[green]Public snapshot built:[/green] {snapshot}")
+
+
+@publication_app.command("validate")
+def publication_validate(
+    root: Annotated[Path, typer.Option()] = PUBLIC_RESULTS_ROOT,
+) -> None:
+    index, snapshots = validate_public_results(root)
+    console.print(
+        f"[green]Validated {len(snapshots)} snapshot(s); "
+        f"latest={index.latest_run_id}.[/green]"
+    )
 
 
 def main() -> None:

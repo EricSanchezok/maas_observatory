@@ -8,9 +8,10 @@
 - 工具选择、参数、并行调用等 function-calling 能力；
 - 长链 agent 中的规划、工具结果整合和可靠性。
 
-首版包含 5 项轻量协议探针、BFCL V4 和 Toolathlon-Verified。发布计划中每个任务
-重复 3 次，报告 Pass@1、Pass@3、Pass^3、置信区间、错误分类、延迟与调用效率；
-不同 benchmark 的分数不会合并成一个缺乏解释性的总分。
+首版包含 5 项轻量协议探针、BFCL V4 和 Toolathlon-Verified。协议探针与长链任务
+每个任务重复 3 次；用于官方口径对照的 BFCL 主结果执行一次完整评测，重复性另行
+测量。报告按适用范围给出 Pass@1、Pass@3、Pass^3、置信区间、错误分类、延迟与
+调用效率；不同 benchmark 的分数不会合并成一个缺乏解释性的总分。
 
 ## 快速开始
 
@@ -37,6 +38,8 @@ BFCL 全量 web-search 子集需要 `SERPAPI_API_KEY`。自托管 Toolathlon 服
 uv run tooluse-bench report build <run-id>
 uv run tooluse-bench release build <run-id>
 uv run tooluse-bench release validate <run-id>
+uv run tooluse-bench publication build <run-id> --title "Release candidate"
+uv run tooluse-bench publication validate
 ```
 
 发布链路会递归脱敏 URL、密钥、鉴权头和本机路径，并生成 SHA-256 校验文件与确定性

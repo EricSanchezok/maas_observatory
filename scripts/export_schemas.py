@@ -11,7 +11,7 @@ from tooluse_bench.domain import ExperimentPlan, ModelCatalog
 from tooluse_bench.publication import PublicResultIndex, PublicSnapshotMetadata
 from tooluse_bench.records import ExecutionAudit, RunCompletion, RunManifest, TaskResult
 from tooluse_bench.release import ReleaseMetadata
-from tooluse_bench.reporting import AggregateResult
+from tooluse_bench.reporting import AggregateResult, ReportMetadata
 
 SCHEMAS = {
     "baseline-registry.schema.json": BaselineRegistry,
@@ -24,6 +24,7 @@ SCHEMAS = {
     "run-completion.schema.json": RunCompletion,
     "run-manifest.schema.json": RunManifest,
     "release-metadata.schema.json": ReleaseMetadata,
+    "report-metadata.schema.json": ReportMetadata,
     "task-result.schema.json": TaskResult,
 }
 

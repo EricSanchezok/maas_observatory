@@ -38,17 +38,24 @@ class BaselineRecord(StrictModel):
     accessed_at: date
     comparability: Comparability
     compatible_deployments: tuple[str, ...] = ()
+    compatible_configurations_sha256: tuple[str, ...] = ()
     settings: dict[str, Any] = Field(default_factory=dict)
     notes: str = ""
 
     @model_validator(mode="after")
     def exact_baselines_require_compatible_deployments(self) -> BaselineRecord:
-        if self.comparability is Comparability.EXACT and not (
-            self.compatible_deployments
-        ):
-            raise ValueError(
-                "exact baselines must list at least one compatible deployment"
-            )
+        if self.comparability is Comparability.EXACT:
+            if not self.compatible_deployments:
+                raise ValueError(
+                    "exact baselines must list at least one compatible deployment"
+                )
+            if not self.compatible_configurations_sha256:
+                raise ValueError(
+                    "exact baselines must list at least one compatible "
+                    "configuration SHA-256"
+                )
+            if not self.settings:
+                raise ValueError("exact baselines must document comparison settings")
         return self
 
 

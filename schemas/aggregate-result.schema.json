@@ -7,6 +7,147 @@
       ],
       "title": "Lane",
       "type": "string"
+    },
+    "TaskGroupAggregate": {
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "default": true,
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "error_categories": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Error Categories",
+          "type": "object"
+        },
+        "error_rate": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Rate"
+        },
+        "expected_trials": {
+          "minimum": 1,
+          "title": "Expected Trials",
+          "type": "integer"
+        },
+        "group_id": {
+          "title": "Group Id",
+          "type": "string"
+        },
+        "pass_at_1": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pass At 1"
+        },
+        "pass_at_1_ci_high": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pass At 1 Ci High"
+        },
+        "pass_at_1_ci_low": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pass At 1 Ci Low"
+        },
+        "pass_at_3": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pass At 3"
+        },
+        "pass_pow_3": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pass Pow 3"
+        },
+        "record_count": {
+          "minimum": 0,
+          "title": "Record Count",
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "status_counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Status Counts",
+          "type": "object"
+        },
+        "task_count": {
+          "minimum": 0,
+          "title": "Task Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group_id",
+        "expected_trials",
+        "task_count",
+        "record_count"
+      ],
+      "title": "TaskGroupAggregate",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -18,6 +159,11 @@
     "benchmark_version": {
       "title": "Benchmark Version",
       "type": "string"
+    },
+    "complete": {
+      "default": true,
+      "title": "Complete",
+      "type": "boolean"
     },
     "deployment_id": {
       "title": "Deployment Id",
@@ -265,6 +411,14 @@
       "minimum": 0,
       "title": "Task Count",
       "type": "integer"
+    },
+    "task_groups": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/TaskGroupAggregate"
+      },
+      "title": "Task Groups",
+      "type": "array"
     }
   },
   "required": [

@@ -49,8 +49,11 @@ cryptographic remote-attestation protocol.
 
 ## Repetitions and metrics
 
-The release plan performs three trials per task with deterministic trial seeds.
-The report includes:
+The release plan performs three trials per protocol-probe and
+Toolathlon-Verified task with deterministic trial seeds. Its primary BFCL
+comparison is one complete run under deterministic request settings, matching
+leaderboard practice; a separate experiment measures BFCL repeatability. The
+report includes:
 
 - Pass@1: mean success over recorded task trials;
 - Pass@3: fraction of tasks with at least one success in three trials;
@@ -62,6 +65,11 @@ The report includes:
 Pass@3 and Pass^3 are emitted only for experiments with exactly three expected
 trials. Other trial counts retain Pass@1 but leave those fields empty rather
 than attaching a misleading label.
+
+BFCL aggregate rows retain per-subset coverage and scores. A partially
+completed subset is marked partial, and its transport or infrastructure errors
+remain separate from model capability failures. The overall row cannot be
+presented as complete when any declared subset is missing or partial.
 
 Transport retries are limited to 429 responses, server errors, timeouts, and
 transport exceptions. Content or protocol failures are not retried. All failed
@@ -78,8 +86,10 @@ causal claim about model weights.
 
 Every external score has a source URL, access date, model name, benchmark
 release, metric, precision description, reasoning mode, and comparability
-label. Only an `exact` record tied to a compatible deployment may produce an
-official delta. The registry currently treats published vendor and leaderboard
-figures as contextual until a same-harness reproduction proves alignment.
+label. Only an `exact` record tied to the `official-reproduction` lane, a
+compatible deployment, and the exact experiment-configuration SHA-256 may
+produce an official delta. The registry currently treats published vendor and
+leaderboard figures as contextual until a same-harness reproduction proves
+alignment.
 
 No composite across unrelated benchmarks is reported.

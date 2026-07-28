@@ -6,10 +6,15 @@ public data formats.
 
 ## Unreleased
 
-- Add strict model, experiment, result, baseline, and release schemas.
-- Add protocol probe, BFCL V4, and Toolathlon-Verified adapters.
-- Add deterministic reporting, recursive redaction, and release validation.
-- Add reproducibility documentation and automated quality gates.
-- Record the first completed three-trial protocol smoke release candidate.
-- Harden completion verification, streaming result publication, checksum
-  parsing, and partial-adapter failure preservation.
+## 0.3.0 - 2026-07-28
+
+- Add report-builder provenance and release schema v3.
+- Add validated, atomic public-snapshot construction and CLI commands.
+- Preserve BFCL per-subset coverage and distinguish inference transport errors
+  from capability failures.
+- Require official-reproduction lane and exact configuration digest for
+  machine-computed official deltas.
+- Terminate timed-out benchmark process groups and expand recursive secret
+  redaction to auxiliary benchmark credentials.
+- Harden protocol clarification scoring, result identity uniqueness, archive
+  validation, and third-party licensing disclosures.

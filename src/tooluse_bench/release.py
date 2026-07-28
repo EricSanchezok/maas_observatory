@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import re
 import shutil
@@ -15,6 +16,7 @@ from pydantic import Field, TypeAdapter, model_validator
 
 from tooluse_bench.config import PROJECT_ROOT, load_model_catalog
 from tooluse_bench.domain import StrictModel
+from tooluse_bench.provenance import git_state
 from tooluse_bench.records import (
     ExecutionAudit,
     RunCompletion,
@@ -23,7 +25,7 @@ from tooluse_bench.records import (
     TaskStatus,
 )
 from tooluse_bench.redaction import Redactor
-from tooluse_bench.reporting import load_completed_run
+from tooluse_bench.reporting import ReportMetadata, load_completed_run
 from tooluse_bench.store import sha256_file
 
 RELEASE_FILES_V1 = frozenset(
@@ -40,7 +42,8 @@ RELEASE_FILES_V1 = frozenset(
     }
 )
 RELEASE_FILES_V2 = RELEASE_FILES_V1 | {"execution-audits.json"}
-EXPECTED_RELEASE_FILES = RELEASE_FILES_V2
+RELEASE_FILES_V3 = RELEASE_FILES_V2 | {"report-metadata.json"}
+EXPECTED_RELEASE_FILES = RELEASE_FILES_V3
 EXECUTION_AUDIT_LIST = TypeAdapter(list[ExecutionAudit])
 MAX_RELEASE_TEXT_FILE_BYTES = 64 * 1024 * 1024
 MAX_RESULT_LINE_CHARACTERS = 64 * 1024 * 1024
@@ -52,11 +55,13 @@ def release_file_inventory(schema_version: int) -> frozenset[str]:
         return RELEASE_FILES_V1
     if schema_version == 2:
         return RELEASE_FILES_V2
+    if schema_version == 3:
+        return RELEASE_FILES_V3
     raise ValueError(f"unsupported release schema version: {schema_version}")
 
 
 class ReleaseMetadata(StrictModel):
-    schema_version: Literal[1, 2] = 2
+    schema_version: Literal[1, 2, 3] = 3
     run_id: str
     git_commit: str
     created_at: str
@@ -64,12 +69,29 @@ class ReleaseMetadata(StrictModel):
     files: tuple[str, ...] = Field(min_length=1)
     source_results_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     published_results_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    release_builder_git_commit: str | None = None
+    release_builder_git_dirty: bool | None = None
+    report_builder_git_commit: str | None = None
+    baseline_registry_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[a-f0-9]{64}$",
+    )
 
     @model_validator(mode="after")
     def validate_file_inventory(self) -> ReleaseMetadata:
         expected = tuple(sorted(release_file_inventory(self.schema_version)))
         if self.files != expected:
             raise ValueError("release metadata file inventory does not match version")
+        if self.schema_version >= 3 and any(
+            value is None
+            for value in (
+                self.release_builder_git_commit,
+                self.release_builder_git_dirty,
+                self.report_builder_git_commit,
+                self.baseline_registry_sha256,
+            )
+        ):
+            raise ValueError("release metadata v3 requires builder provenance")
         return self
 
 
@@ -180,6 +202,45 @@ def _build_deterministic_tar(source: Path, destination: Path) -> None:
                 archive.addfile(info, handle)
 
 
+def validate_release_archive(directory: Path, archive_path: Path) -> None:
+    if archive_path.is_symlink() or not archive_path.is_file():
+        raise ValueError("release archive must be a regular file")
+    expected = {
+        f"{directory.name}/{path.name}": sha256_file(path)
+        for path in directory.iterdir()
+        if path.is_file()
+    }
+    actual: dict[str, str] = {}
+    try:
+        with tarfile.open(archive_path, mode="r:gz") as archive:
+            for member in archive:
+                if not member.isfile() or member.issym() or member.islnk():
+                    raise ValueError("release archive may contain only regular files")
+                if (
+                    member.uid != 0
+                    or member.gid != 0
+                    or member.uname
+                    or member.gname
+                    or member.mtime != 0
+                ):
+                    raise ValueError(
+                        "release archive contains non-deterministic metadata"
+                    )
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    raise ValueError("release archive member cannot be read")
+                digest = hashlib.sha256()
+                while chunk := extracted.read(1024 * 1024):
+                    digest.update(chunk)
+                if member.name in actual:
+                    raise ValueError("release archive contains duplicate paths")
+                actual[member.name] = digest.hexdigest()
+    except (tarfile.TarError, OSError) as exc:
+        raise ValueError("release archive is not a valid gzip tar") from exc
+    if actual != expected:
+        raise ValueError("release archive contents do not match release directory")
+
+
 def build_release(
     run_directory: Path,
     *,
@@ -193,6 +254,7 @@ def build_release(
         report_directory / "metrics.json",
         report_directory / "metrics.csv",
         report_directory / "report.md",
+        report_directory / "report-metadata.json",
     ]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
@@ -216,6 +278,11 @@ def build_release(
         redactor.text(required[5].read_text(encoding="utf-8")),
         encoding="utf-8",
     )
+    _write_sanitized_json(
+        required[6],
+        destination / "report-metadata.json",
+        redactor,
+    )
     _write_sanitized_results(
         required[2],
         destination / "results.jsonl.gz",
@@ -228,13 +295,21 @@ def build_release(
         run_id=manifest.run_id,
     )
     shutil.copyfile(PROJECT_ROOT / "LICENSE-DATA", destination / "LICENSE-DATA")
+    report_metadata = ReportMetadata.model_validate_json(
+        required[6].read_text(encoding="utf-8")
+    )
+    builder_commit, builder_dirty = git_state()
     metadata = ReleaseMetadata(
         run_id=manifest.run_id,
         git_commit=manifest.git_commit,
         created_at=manifest.created_at.isoformat(),
-        files=tuple(sorted(RELEASE_FILES_V2)),
+        files=tuple(sorted(RELEASE_FILES_V3)),
         source_results_sha256=completion.results_sha256,
         published_results_sha256=sha256_file(destination / "results.jsonl.gz"),
+        release_builder_git_commit=builder_commit,
+        release_builder_git_dirty=builder_dirty,
+        report_builder_git_commit=report_metadata.report_builder_git_commit,
+        baseline_registry_sha256=report_metadata.baseline_registry_sha256,
     )
     (destination / "release-metadata.json").write_text(
         _json_text(metadata.model_dump(mode="json")),
@@ -245,6 +320,7 @@ def build_release(
 
     archive = destination_root / f"{manifest.run_id}.tar.gz"
     _build_deterministic_tar(destination, archive)
+    validate_release_archive(destination, archive)
     return destination, archive
 
 
@@ -341,6 +417,26 @@ def validate_release(
         ]
         if len(identities) != len(set(identities)):
             raise ValueError("duplicate execution audit identity")
+    if metadata.schema_version >= 3:
+        report_metadata = ReportMetadata.model_validate_json(
+            (directory / "report-metadata.json").read_text(encoding="utf-8")
+        )
+        if report_metadata.run_id != manifest.run_id:
+            raise ValueError("report metadata run_id does not match manifest")
+        if report_metadata.run_git_commit != manifest.git_commit:
+            raise ValueError("report metadata run Git commit does not match")
+        if report_metadata.source_results_sha256 != completion.results_sha256:
+            raise ValueError("report metadata result hash does not match completion")
+        if (
+            metadata.report_builder_git_commit
+            != report_metadata.report_builder_git_commit
+        ):
+            raise ValueError("report builder Git commits do not match")
+        if (
+            metadata.baseline_registry_sha256
+            != report_metadata.baseline_registry_sha256
+        ):
+            raise ValueError("baseline registry hashes do not match")
     result_count = 0
     status_counts: Counter[TaskStatus] = Counter()
     with gzip.open(

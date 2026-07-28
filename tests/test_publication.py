@@ -14,6 +14,7 @@ from tooluse_bench.publication import (
     PublicSnapshotMetadata,
     render_public_results_markdown,
     validate_public_results,
+    validate_public_snapshot,
 )
 from tooluse_bench.store import sha256_file
 
@@ -211,6 +212,88 @@ def test_symlinked_public_results_root_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="not a real directory"):
         validate_public_results(linked_root)
+
+
+def test_missing_public_snapshot_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not a real directory"):
+        validate_public_snapshot(tmp_path / "missing")
+
+
+def test_public_result_file_safety_guards(tmp_path: Path) -> None:
+    root = copy_public_results(tmp_path)
+    (root / "linked").symlink_to(root / "index.json")
+    with pytest.raises(ValueError, match="must not contain symlinks"):
+        validate_public_results(root)
+
+    root = copy_public_results(tmp_path / "snapshot-link")
+    directory = snapshot_directory(root)
+    report = directory / "report.md"
+    report.unlink()
+    report.symlink_to(directory / "release-report.md")
+    with pytest.raises(ValueError, match="must not contain symlinks"):
+        validate_public_results(root)
+
+    root = copy_public_results(tmp_path / "oversized")
+    (root / "index.json").write_bytes(b"x" * (2 * 1024 * 1024 + 1))
+    with pytest.raises(ValueError, match="exceeds size limit"):
+        validate_public_results(root)
+
+
+def test_snapshot_secret_and_checksum_inventory_guards(tmp_path: Path) -> None:
+    root = copy_public_results(tmp_path)
+    directory = snapshot_directory(root)
+    (directory / "report.md").write_text(
+        "credential: " + "sk-" + "privatevalue123456\n",
+        encoding="utf-8",
+    )
+    refresh_checksums(directory)
+    with pytest.raises(ValueError, match="common API key"):
+        validate_public_results(root)
+
+    root = copy_public_results(tmp_path / "inventory")
+    directory = snapshot_directory(root)
+    checksum_path = directory / "checksums.sha256"
+    lines = checksum_path.read_text(encoding="utf-8").splitlines()
+    checksum_path.write_text("\n".join(lines[1:]) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="checksum inventory"):
+        validate_public_results(root)
+
+    root = copy_public_results(tmp_path / "duplicate")
+    directory = snapshot_directory(root)
+    checksum_path = directory / "checksums.sha256"
+    first = checksum_path.read_text(encoding="utf-8").splitlines()[0]
+    with checksum_path.open("a", encoding="utf-8") as handle:
+        handle.write(first + "\n")
+    with pytest.raises(ValueError, match="duplicate filename"):
+        validate_public_results(root)
+
+
+def test_snapshot_identity_and_released_rendering(tmp_path: Path) -> None:
+    root = copy_public_results(tmp_path)
+    directory = snapshot_directory(root)
+    mutate_json(directory, "snapshot.json", {"run_id": "different"})
+    with pytest.raises(ValueError, match="run IDs"):
+        validate_public_results(root)
+
+    root = copy_public_results(tmp_path / "released")
+    directory = snapshot_directory(root)
+    mutate_json(
+        directory,
+        "snapshot.json",
+        {
+            "status": "released",
+            "release_url": "https://example.com/releases/example",
+            "notes": ["Immutable release archive."],
+        },
+    )
+    index_path = root / "index.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["snapshots"][0]["status"] = "released"
+    write_json(index_path, index)
+
+    rendered = render_public_results_markdown(root)
+    assert "https://example.com/releases/example" in rendered
+    assert "Immutable release archive." in rendered
 
 
 def test_index_inventory_and_metadata_mismatches_are_rejected(

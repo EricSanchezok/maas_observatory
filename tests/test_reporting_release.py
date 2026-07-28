@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import shutil
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -17,8 +18,13 @@ from tooluse_bench.baselines import (
     BaselineSourceKind,
     Comparability,
 )
-from tooluse_bench.config import load_model_catalog
+from tooluse_bench.config import PROJECT_ROOT, load_model_catalog
 from tooluse_bench.domain import Lane
+from tooluse_bench.publication import (
+    build_public_snapshot,
+    validate_public_results,
+    write_public_results_markdown,
+)
 from tooluse_bench.records import (
     BenchmarkMetadata,
     ErrorCategory,
@@ -30,9 +36,14 @@ from tooluse_bench.records import (
 )
 from tooluse_bench.redaction import Redactor
 from tooluse_bench.release import (
+    RELEASE_FILES_V1,
+    RELEASE_FILES_V2,
+    RELEASE_FILES_V3,
+    ReleaseMetadata,
     build_release,
     release_file_inventory,
     validate_release,
+    validate_release_archive,
 )
 from tooluse_bench.reporting import aggregate_results, build_report, load_results
 from tooluse_bench.store import RunStore, sha256_file
@@ -46,6 +57,9 @@ def baseline_registry(
     comparability: Comparability = Comparability.CONTEXTUAL,
 ) -> BaselineRegistry:
     compatible = (DEPLOYMENT_ID,) if comparability is Comparability.EXACT else ()
+    compatible_configurations = (
+        ("b" * 64,) if comparability is Comparability.EXACT else ()
+    )
     return BaselineRegistry(
         schema_version=1,
         baselines=[
@@ -63,6 +77,12 @@ def baseline_registry(
                 accessed_at=date(2026, 7, 28),
                 comparability=comparability,
                 compatible_deployments=compatible,
+                compatible_configurations_sha256=compatible_configurations,
+                settings=(
+                    {"agent": "fixture", "reasoning_mode": "default"}
+                    if comparability is Comparability.EXACT
+                    else {}
+                ),
             )
         ],
     )
@@ -105,6 +125,7 @@ def make_result(
     trial: int,
     status: TaskStatus,
     secret: str = "",
+    lane: Lane = Lane.STANDARDIZED,
 ):
     spec = RunSpec(
         run_id=RUN_ID,
@@ -112,7 +133,7 @@ def make_result(
         benchmark_id="probe",
         benchmark_version="1.0.0",
         profile="full",
-        lane=Lane.STANDARDIZED,
+        lane=lane,
         deployment_id=DEPLOYMENT_ID,
         model_alias="deepseek-v4-pro",
         trial=trial,
@@ -185,10 +206,20 @@ def test_aggregate_statistics_are_deterministic_and_exact_delta_is_guarded() -> 
     ]
     contextual = aggregate_results(results, baselines=baseline_registry())[0]
     exact_first = aggregate_results(
-        results, baselines=baseline_registry(comparability=Comparability.EXACT)
+        [
+            item.model_copy(update={"lane": Lane.OFFICIAL_REPRODUCTION})
+            for item in results
+        ],
+        baselines=baseline_registry(comparability=Comparability.EXACT),
+        configuration_sha256="b" * 64,
     )[0]
     exact_second = aggregate_results(
-        results, baselines=baseline_registry(comparability=Comparability.EXACT)
+        [
+            item.model_copy(update={"lane": Lane.OFFICIAL_REPRODUCTION})
+            for item in results
+        ],
+        baselines=baseline_registry(comparability=Comparability.EXACT),
+        configuration_sha256="b" * 64,
     )[0]
 
     assert contextual.pass_at_1 == pytest.approx(1 / 3)
@@ -198,6 +229,15 @@ def test_aggregate_statistics_are_deterministic_and_exact_delta_is_guarded() -> 
     assert exact_first.official_delta == pytest.approx(-1 / 6)
     assert exact_first.pass_at_1_ci_low == exact_second.pass_at_1_ci_low
     assert exact_first.pass_at_1_ci_high == exact_second.pass_at_1_ci_high
+    wrong_configuration = aggregate_results(
+        [
+            item.model_copy(update={"lane": Lane.OFFICIAL_REPRODUCTION})
+            for item in results
+        ],
+        baselines=baseline_registry(comparability=Comparability.EXACT),
+        configuration_sha256="f" * 64,
+    )[0]
+    assert wrong_configuration.official_delta is None
 
     one_trial = aggregate_results(
         [make_result(task_id="task-a", trial=1, status=TaskStatus.PASS)],
@@ -206,6 +246,69 @@ def test_aggregate_statistics_are_deterministic_and_exact_delta_is_guarded() -> 
     assert one_trial.expected_trials == 1
     assert one_trial.pass_at_3 is None
     assert one_trial.pass_pow_3 is None
+
+
+def test_bfcl_subset_metrics_preserve_partial_coverage() -> None:
+    spec = RunSpec(
+        run_id=RUN_ID,
+        experiment_id="report-test",
+        benchmark_id="bfcl-v4",
+        benchmark_version="bfcl-test",
+        profile="full-public",
+        lane=Lane.STANDARDIZED,
+        deployment_id=DEPLOYMENT_ID,
+        model_alias="deepseek-v4-pro",
+        trial=1,
+        seed=1,
+    )
+    now = datetime(2026, 7, 28, tzinfo=UTC)
+
+    def item(
+        task_id: str,
+        status: TaskStatus,
+        category: ErrorCategory = ErrorCategory.NONE,
+    ):
+        return result_from_spec(
+            spec,
+            task_id=task_id,
+            status=status,
+            score=(
+                float(status is TaskStatus.PASS)
+                if status in {TaskStatus.PASS, TaskStatus.FAIL}
+                else None
+            ),
+            started_at=now,
+            finished_at=now,
+            latency_seconds=None,
+            error_category=category,
+        )
+
+    [aggregate] = aggregate_results(
+        [
+            item("simple_python/0", TaskStatus.PASS),
+            item(
+                "simple_python/1",
+                TaskStatus.FAIL,
+                ErrorCategory.ARGUMENTS,
+            ),
+            item("parallel/0", TaskStatus.ERROR, ErrorCategory.TIMEOUT),
+            item(
+                "__subset__/web_search_base",
+                TaskStatus.ERROR,
+                ErrorCategory.INFRASTRUCTURE,
+            ),
+        ],
+        baselines=baseline_registry(),
+    )
+
+    assert aggregate.complete is False
+    assert aggregate.task_count == 3
+    assert aggregate.pass_at_1 == pytest.approx(1 / 3)
+    groups = {group.group_id: group for group in aggregate.task_groups}
+    assert groups["simple_python"].pass_at_1 == 0.5
+    assert groups["parallel"].error_rate == 1
+    assert groups["web_search_base"].complete is False
+    assert groups["web_search_base"].task_count == 0
 
 
 def test_baseline_registry_rejects_false_exact_and_duplicate_ids() -> None:
@@ -272,7 +375,10 @@ def test_report_and_release_are_valid_sanitized_and_deterministic(
     }
 
     metadata = json.loads((release_one / "release-metadata.json").read_text())
-    assert metadata["schema_version"] == 2
+    assert metadata["schema_version"] == 3
+    assert metadata["report_builder_git_commit"]
+    assert metadata["release_builder_git_commit"]
+    assert metadata["baseline_registry_sha256"]
     assert metadata["source_results_sha256"] != metadata["published_results_sha256"]
 
 
@@ -301,9 +407,111 @@ def test_release_validation_detects_tampering(tmp_path: Path) -> None:
         validate_release(release_directory)
 
 
+def test_release_build_and_archive_require_real_inputs(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not release-ready"):
+        build_release(tmp_path / "incomplete", output_root=tmp_path / "release")
+    with pytest.raises(ValueError, match="regular file"):
+        validate_release_archive(tmp_path, tmp_path / "missing.tar.gz")
+
+
+def test_public_snapshot_builder_derives_from_validated_release(
+    tmp_path: Path,
+) -> None:
+    run_directory = tmp_path / "private" / RUN_ID
+    create_completed_run(run_directory)
+    build_report(run_directory, baselines=baseline_registry())
+    release_directory, archive = build_release(
+        run_directory,
+        output_root=tmp_path / "release",
+    )
+    public_root = tmp_path / "public-results"
+
+    snapshot = build_public_snapshot(
+        release_directory,
+        archive,
+        title="Fixture release candidate",
+        root=public_root,
+    )
+    index, snapshots = validate_public_results(public_root)
+    assert snapshot.name == RUN_ID
+    assert index.latest_run_id == RUN_ID
+    assert RUN_ID in snapshots
+    results_page = write_public_results_markdown(
+        public_root,
+        destination=tmp_path / "results.md",
+    )
+    assert "Fixture release candidate" in results_page.read_text()
+    assert "### Provenance" in results_page.read_text()
+
+    with pytest.raises(ValueError, match="already exists"):
+        build_public_snapshot(
+            release_directory,
+            archive,
+            title="Duplicate",
+            root=public_root,
+        )
+
+    invalid_archive = tmp_path / "invalid.tar.gz"
+    invalid_archive.write_bytes(b"not a gzip tar")
+    with pytest.raises(ValueError, match="valid gzip tar"):
+        validate_release_archive(release_directory, invalid_archive)
+
+
+def test_public_snapshot_can_preserve_existing_latest_result(tmp_path: Path) -> None:
+    run_directory = tmp_path / "private" / RUN_ID
+    create_completed_run(run_directory)
+    build_report(run_directory, baselines=baseline_registry())
+    release_directory, archive = build_release(
+        run_directory,
+        output_root=tmp_path / "release",
+    )
+    public_root = tmp_path / "public-results"
+    shutil.copytree(PROJECT_ROOT / "public-results", public_root)
+    previous_index, _ = validate_public_results(public_root)
+
+    build_public_snapshot(
+        release_directory,
+        archive,
+        title="Additional released result",
+        status="released",
+        release_url="https://example.com/releases/run-report-test",
+        notes=("Immutable release archive.",),
+        root=public_root,
+        make_latest=False,
+    )
+
+    index, snapshots = validate_public_results(public_root)
+    assert index.latest_run_id == previous_index.latest_run_id
+    assert snapshots[RUN_ID][0].release_url is not None
+
+
 def test_release_file_inventory_rejects_unknown_schema_version() -> None:
+    assert release_file_inventory(1) == RELEASE_FILES_V1
+    assert release_file_inventory(2) == RELEASE_FILES_V2
+    assert release_file_inventory(3) == RELEASE_FILES_V3
     with pytest.raises(ValueError, match="unsupported release schema version"):
         release_file_inventory(99)
+
+    with pytest.raises(ValidationError, match="file inventory"):
+        ReleaseMetadata(
+            schema_version=1,
+            run_id="run",
+            git_commit="a" * 40,
+            created_at="2026-07-28T00:00:00+00:00",
+            files=("wrong",),
+            source_results_sha256="b" * 64,
+            published_results_sha256="c" * 64,
+        )
+    with pytest.raises(ValidationError, match="builder provenance"):
+        ReleaseMetadata(
+            schema_version=3,
+            run_id="run",
+            git_commit="a" * 40,
+            created_at="2026-07-28T00:00:00+00:00",
+            files=tuple(sorted(RELEASE_FILES_V3)),
+            source_results_sha256="b" * 64,
+            published_results_sha256="c" * 64,
+        )
 
 
 def test_report_rejects_incomplete_and_tampered_runs(tmp_path: Path) -> None:
@@ -353,7 +561,7 @@ def test_redactor_detects_known_leak_patterns() -> None:
     redactor = Redactor((("known-secret", "[REDACTED]"),))
     text = (
         "Bearer " + "abcdefghijklmnop sk-" + "abcdefghijklmnop "
-        "/Users/eric/private known-secret"
+        "/Users/example/private known-secret"
     )
     assert redactor.findings(text) == [
         "absolute user path",
@@ -362,3 +570,15 @@ def test_redactor_detects_known_leak_patterns() -> None:
         "known private environment value",
     ]
     assert redactor.findings(redactor.text(text)) == []
+
+
+def test_redactor_includes_auxiliary_environment_secrets() -> None:
+    values = {
+        "SERPAPI_API_KEY": "serp-secret-value",
+        "TOOLATHLON_SERVER_HOST": "toolathlon.internal",
+    }
+    with patch.dict("os.environ", values, clear=False):
+        redactor = Redactor.from_catalog(load_model_catalog())
+
+    rendered = redactor.text("serp-secret-value via toolathlon.internal")
+    assert rendered == "[REDACTED] via [REDACTED]"

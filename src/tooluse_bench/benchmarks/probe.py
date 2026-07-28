@@ -170,7 +170,32 @@ def _check_missing_info(message: dict[str, Any]) -> tuple[bool, str]:
     if error:
         return False, error
     content = message.get("content")
-    passed = not calls and isinstance(content, str) and bool(content.strip())
+    normalized = content.lower() if isinstance(content, str) else ""
+    asks_for_origin = any(
+        marker in normalized
+        for marker in (
+            "origin",
+            "departure",
+            "departing",
+            "depart from",
+            "leaving from",
+            "出发",
+            "起飞",
+        )
+    )
+    requests_information = any(
+        marker in normalized
+        for marker in (
+            "?",
+            "please provide",
+            "need to know",
+            "which",
+            "what",
+            "请提供",
+            "需要知道",
+        )
+    )
+    passed = not calls and asks_for_origin and requests_information
     return passed, f"expected a clarification without a tool call, got {calls!r}"
 
 
@@ -222,9 +247,9 @@ class ProbeAdapter(BenchmarkAdapter):
         return BenchmarkMetadata(
             benchmark_id="probe",
             display_name="SII Native Tool-calling Protocol Probe",
-            version="1.0.0",
+            version="1.1.0",
             source_url="https://github.com/sii-holos/tool-use",
-            revision="probe-v1",
+            revision="probe-v1.1",
             hermetic_default=True,
             supported_profiles=("full",),
         )
@@ -273,8 +298,10 @@ class ProbeAdapter(BenchmarkAdapter):
                 "seed": context.spec.seed,
                 "max_tokens": int(context.selection.options.get("max_tokens", 4096)),
             }
+            response_payload: dict[str, Any] | None = None
             try:
                 outcome = context.transport.chat_completion(payload)
+                response_payload = outcome.payload
                 message = outcome.payload["choices"][0]["message"]
                 if not isinstance(message, dict):
                     raise TypeError("choices[0].message must be an object")
@@ -321,6 +348,7 @@ class ProbeAdapter(BenchmarkAdapter):
                     finished_at=finished_at,
                     latency_seconds=(finished_at - started_at).total_seconds(),
                     request=payload,
+                    response=response_payload,
                     error_category=ErrorCategory.PROTOCOL,
                     error_detail=f"{type(exc).__name__}: {exc}",
                 )

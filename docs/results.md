@@ -2,6 +2,15 @@
 
 ## Protocol smoke candidate — 2026-07-28
 
+- Status: `candidate`
+- Run ID: `20260728T054932740593Z-protocol-smoke-v1-5f0271f4-8dd04365`
+- Archive SHA-256: `1b38e732e640870c3071625b698ab9c2433f6b8ddc3412da836170b105eeace7`
+
+- This is a completed protocol diagnostic, not an official upstream benchmark comparison.
+- A 30-second wall-clock budget and a 4,096-token output cap were applied without retry.
+- Transport errors occur before task scoring and must not be interpreted as model capability scores.
+- The validated archive is a candidate because this local repository has no Git remote.
+
 This is a completed three-trial protocol diagnostic, not an immutable public
 release and not an official upstream benchmark comparison.
 

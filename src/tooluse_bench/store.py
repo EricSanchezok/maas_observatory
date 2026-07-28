@@ -40,6 +40,7 @@ class RunStore:
         self.results_path = directory / "results.jsonl"
         self._status_counts: Counter[TaskStatus] = Counter()
         self._result_count = 0
+        self._identities: set[tuple[str, str, str, str, str, int]] = set()
         self._closed = False
 
     @classmethod
@@ -62,12 +63,23 @@ class RunStore:
             raise RuntimeError("run store is finalized")
         if result.run_id != self.manifest.run_id:
             raise ValueError("result run_id does not match manifest")
+        identity = (
+            result.benchmark_id,
+            result.profile,
+            result.lane.value,
+            result.deployment_id,
+            result.task_id,
+            result.trial,
+        )
+        if identity in self._identities:
+            raise ValueError(f"duplicate task result identity: {identity}")
         line = canonical_json(result.model_dump(mode="json"))
         with self.results_path.open("a", encoding="utf-8") as handle:
             handle.write(f"{line}\n")
             handle.flush()
             os.fsync(handle.fileno())
         self._result_count += 1
+        self._identities.add(identity)
         self._status_counts[result.status] += 1
 
     def finalize(self) -> RunCompletion:

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,18 +53,31 @@ def run_logged_command(
         stdout_path.open("wb") as stdout,
         stderr_path.open("wb") as stderr,
     ):
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=environment,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=os.name == "posix",
+        )
         try:
-            process = subprocess.run(
-                command,
-                cwd=cwd,
-                env=environment,
-                stdout=stdout,
-                stderr=stderr,
-                timeout=timeout_seconds,
-                check=False,
-            )
-            return_code = process.returncode
+            return_code = process.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
+            with suppress(ProcessLookupError):
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGTERM)
+                else:
+                    process.terminate()
+            with suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=5)
+            with suppress(ProcessLookupError):
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                elif process.poll() is None:
+                    process.kill()
+            if process.poll() is None:
+                process.wait()
             return_code = 124
     return CommandOutcome(
         return_code=return_code,

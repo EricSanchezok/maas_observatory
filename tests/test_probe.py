@@ -53,6 +53,12 @@ class ProbeScoringTests(unittest.TestCase):
         self.assertTrue(
             _check_missing_info({"content": "What city are you departing from?"})[0]
         )
+        self.assertFalse(
+            _check_missing_info({"content": "I cannot help with that request."})[0]
+        )
+        self.assertFalse(
+            _check_missing_info({"content": "Your flight has been booked."})[0]
+        )
 
 
 if __name__ == "__main__":

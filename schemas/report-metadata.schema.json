@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "baseline_registry_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Baseline Registry Sha256",
+      "type": "string"
+    },
+    "report_builder_git_commit": {
+      "title": "Report Builder Git Commit",
+      "type": "string"
+    },
+    "report_builder_git_dirty": {
+      "title": "Report Builder Git Dirty",
+      "type": "boolean"
+    },
+    "report_builder_package_version": {
+      "title": "Report Builder Package Version",
+      "type": "string"
+    },
+    "run_git_commit": {
+      "title": "Run Git Commit",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source_results_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Source Results Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "run_git_commit",
+    "source_results_sha256",
+    "report_builder_git_commit",
+    "report_builder_git_dirty",
+    "report_builder_package_version",
+    "baseline_registry_sha256"
+  ],
+  "title": "ReportMetadata",
+  "type": "object"
+}

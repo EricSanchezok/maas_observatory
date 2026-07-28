@@ -197,6 +197,29 @@ def test_probe_adapter_records_transport_and_protocol_errors(tmp_path: Path) -> 
     )
     assert {result.status for result in missing_results} == {TaskStatus.FAIL}
 
+    class InvalidEnvelopeTransport:
+        def chat_completion(self, payload: dict) -> TransportResponse:
+            del payload
+            return TransportResponse(
+                payload={"choices": []},
+                attempts=1,
+                latency_seconds=0.1,
+                status_code=200,
+            )
+
+    invalid_envelopes = list(
+        ProbeAdapter().run(
+            context(
+                tmp_path / "probe-invalid-envelope",
+                benchmark_id="probe",
+                profile="full",
+                transport=InvalidEnvelopeTransport(),
+            )
+        )
+    )
+    assert {result.status for result in invalid_envelopes} == {TaskStatus.ERROR}
+    assert all(result.response == {"choices": []} for result in invalid_envelopes)
+
     with pytest.raises(RuntimeError, match="native OpenAI transport"):
         list(
             ProbeAdapter().run(
@@ -281,6 +304,8 @@ def test_bfcl_adapter_normalizes_results_and_failures(tmp_path: Path) -> None:
     assert results[2].response == {"upstream_error": "Connection error."}
     assert "private_traceback" not in json.dumps(results[2].response)
     assert results[-1].task_id == "__subset__/web_search_base"
+    assert results[0].artifact_paths[-1] == "upstream/source-a"
+    assert results[1].error_category is ErrorCategory.ARGUMENTS
     spec = json.loads(
         (adapter_context.workspace / "bfcl-spec.json").read_text(encoding="utf-8")
     )

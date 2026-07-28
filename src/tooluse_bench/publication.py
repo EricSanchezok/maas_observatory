@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import tempfile
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -15,7 +18,12 @@ from tooluse_bench.config import PROJECT_ROOT, load_model_catalog
 from tooluse_bench.domain import StrictModel
 from tooluse_bench.records import RunCompletion, RunManifest
 from tooluse_bench.redaction import Redactor
-from tooluse_bench.release import ReleaseMetadata, release_file_inventory
+from tooluse_bench.release import (
+    ReleaseMetadata,
+    release_file_inventory,
+    validate_release,
+    validate_release_archive,
+)
 from tooluse_bench.reporting import AggregateResult
 from tooluse_bench.store import sha256_file
 
@@ -108,6 +116,154 @@ def _load_checksums(path: Path) -> dict[str, str]:
             raise ValueError(f"{path}:{line_number}: duplicate filename")
         checksums[filename] = digest
     return checksums
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _snapshot_checksums(directory: Path) -> dict[str, str]:
+    return {
+        path.name: sha256_file(path)
+        for path in sorted(directory.iterdir())
+        if path.is_file() and path.name != "checksums.sha256"
+    }
+
+
+def _write_snapshot_checksums(directory: Path) -> None:
+    lines = [
+        f"{digest}  {filename}"
+        for filename, digest in sorted(_snapshot_checksums(directory).items())
+    ]
+    (directory / "checksums.sha256").write_text(
+        "\n".join(lines) + "\n",
+        encoding="utf-8",
+    )
+
+
+def build_public_snapshot(
+    release_directory: Path,
+    archive_path: Path,
+    *,
+    title: str,
+    status: SnapshotStatus = SnapshotStatus.CANDIDATE,
+    release_url: str | None = None,
+    notes: tuple[str, ...] = (),
+    root: Path = PUBLIC_RESULTS_ROOT,
+    make_latest: bool = True,
+) -> Path:
+    validate_release(release_directory)
+    validate_release_archive(release_directory, archive_path)
+    release = ReleaseMetadata.model_validate(
+        _load_json(release_directory / "release-metadata.json")
+    )
+    manifest = RunManifest.model_validate(
+        _load_json(release_directory / "manifest.json")
+    )
+    if release.run_id != manifest.run_id:
+        raise ValueError("release and manifest run IDs do not match")
+
+    if root.exists():
+        index, _ = validate_public_results(root)
+        previous_latest_run_id = index.latest_run_id
+        previous_index_payload = (root / "index.json").read_bytes()
+        references = list(index.snapshots)
+        if release.run_id in {item.run_id for item in references}:
+            raise ValueError(f"public snapshot already exists: {release.run_id}")
+    else:
+        root.mkdir(parents=True)
+        previous_latest_run_id = None
+        previous_index_payload = None
+        references = []
+    destination = root / release.run_id
+    if destination.exists():
+        raise ValueError(f"public snapshot destination exists: {destination}")
+
+    with tempfile.TemporaryDirectory(
+        prefix=f".{release.run_id}-",
+        dir=root.parent,
+    ) as temporary:
+        staging = Path(temporary) / release.run_id
+        staging.mkdir()
+        source_copies = {
+            "completion.json": "completion.json",
+            "manifest.json": "manifest.json",
+            "release-checksums.sha256": "checksums.sha256",
+            "release-metadata.json": "release-metadata.json",
+            "release-metrics.json": "metrics.json",
+            "release-report.md": "report.md",
+            "metrics.json": "metrics.json",
+            "report.md": "report.md",
+        }
+        for destination_name, source_name in source_copies.items():
+            shutil.copyfile(
+                release_directory / source_name,
+                staging / destination_name,
+            )
+        parsed_release_url = (
+            TypeAdapter(HttpUrl).validate_python(release_url)
+            if release_url is not None
+            else None
+        )
+        snapshot = PublicSnapshotMetadata(
+            run_id=release.run_id,
+            title=title,
+            status=status,
+            release_url=parsed_release_url,
+            archive_sha256=sha256_file(archive_path),
+            created_at=manifest.created_at,
+            notes=notes,
+        )
+        _write_json(staging / "snapshot.json", snapshot.model_dump(mode="json"))
+        _write_snapshot_checksums(staging)
+        validate_public_snapshot(staging)
+        staging.rename(destination)
+
+    reference = PublicSnapshotReference(
+        run_id=release.run_id,
+        path=destination.name,
+        title=title,
+        status=status,
+    )
+    references.insert(0, reference)
+    latest_run_id = (
+        release.run_id
+        if make_latest or previous_latest_run_id is None
+        else previous_latest_run_id
+    )
+    new_index = PublicResultIndex(
+        latest_run_id=latest_run_id,
+        snapshots=references,
+    )
+    index_temporary = root / ".index.json.tmp"
+    try:
+        _write_json(index_temporary, new_index.model_dump(mode="json"))
+        os.replace(index_temporary, root / "index.json")
+        validate_public_results(root)
+    except Exception:
+        index_temporary.unlink(missing_ok=True)
+        shutil.rmtree(destination)
+        if previous_index_payload is None:
+            (root / "index.json").unlink(missing_ok=True)
+        else:
+            (root / "index.json").write_bytes(previous_index_payload)
+        raise
+    return destination
+
+
+def write_public_results_markdown(
+    root: Path = PUBLIC_RESULTS_ROOT,
+    *,
+    destination: Path = PROJECT_ROOT / "docs" / "results.md",
+) -> Path:
+    destination.write_text(
+        render_public_results_markdown(root),
+        encoding="utf-8",
+    )
+    return destination
 
 
 def validate_public_snapshot(
@@ -278,14 +434,36 @@ def validate_public_results(
 
 
 def render_public_results_markdown(root: Path = PUBLIC_RESULTS_ROOT) -> str:
-    index, _ = validate_public_results(root)
+    index, snapshots = validate_public_results(root)
     sections = ["# Results", ""]
     for reference in index.snapshots:
+        snapshot, _ = snapshots[reference.run_id]
+        sections.extend(
+            (
+                f"## {snapshot.title}",
+                "",
+                f"- Status: `{snapshot.status.value}`",
+                f"- Run ID: `{snapshot.run_id}`",
+                f"- Archive SHA-256: `{snapshot.archive_sha256}`",
+            )
+        )
+        if snapshot.release_url is not None:
+            sections.append(
+                f"- Release: [{snapshot.release_url}]({snapshot.release_url})"
+            )
+        if snapshot.notes:
+            sections.extend(("", *[f"- {note}" for note in snapshot.notes]))
+        sections.append("")
         report = (root / reference.path / "report.md").read_text(encoding="utf-8")
+        report_lines = report.rstrip().splitlines()
+        if report_lines and report_lines[0].startswith("# "):
+            report_lines = report_lines[1:]
+            while report_lines and not report_lines[0]:
+                report_lines.pop(0)
         demoted = re.sub(
             r"(?m)^(#+) ",
             lambda match: f"#{match.group(1)} ",
-            report.rstrip(),
+            "\n".join(report_lines),
         )
         sections.extend((demoted, ""))
     return "\n".join(sections)

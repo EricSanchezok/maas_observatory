@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from tooluse_bench.benchmarks.base import AdapterContext, BenchmarkAdapter
@@ -64,6 +65,26 @@ PROFILE_SUBSETS = {
     "core": CORE_SUBSETS,
     "full-public": ALL_PUBLIC_SUBSETS,
 }
+
+
+def _failure_category(task_id: str) -> ErrorCategory:
+    subset = task_id.split("/", 1)[0]
+    if "irrelevance" in subset or subset in {"multiple", "live_multiple"}:
+        return ErrorCategory.SELECTION
+    if "parallel" in subset:
+        return ErrorCategory.PLANNING
+    if subset.startswith("multi_turn"):
+        return ErrorCategory.TOOL_RESULT_INTEGRATION
+    if subset.startswith(("web_search", "memory")):
+        return ErrorCategory.PLANNING
+    return ErrorCategory.ARGUMENTS
+
+
+def _source_artifacts(normalized_path: Path, source_path: object) -> tuple[str, ...]:
+    artifacts = [str(normalized_path)]
+    if isinstance(source_path, str) and source_path:
+        artifacts.append(f"upstream/{source_path}")
+    return tuple(artifacts)
 
 
 class BFCLAdapter(BenchmarkAdapter):
@@ -244,84 +265,93 @@ class BFCLAdapter(BenchmarkAdapter):
             return
 
         if normalized_path.exists():
-            for line_number, line in enumerate(
-                normalized_path.read_text(encoding="utf-8").splitlines(), start=1
-            ):
-                if not line.strip():
-                    continue
-                raw: dict[str, Any] = json.loads(line)
-                raw_error_category = raw.get("error_category")
-                if isinstance(raw_error_category, str):
+            with normalized_path.open(encoding="utf-8") as normalized:
+                for line_number, line in enumerate(normalized, start=1):
+                    if not line.strip():
+                        continue
+                    raw: dict[str, Any] = json.loads(line)
+                    raw_error_category = raw.get("error_category")
+                    if isinstance(raw_error_category, str):
+                        yield result_from_spec(
+                            context.spec,
+                            task_id=str(raw.get("task_id", f"record-{line_number}")),
+                            status=TaskStatus.ERROR,
+                            started_at=started_at,
+                            finished_at=finished_at,
+                            latency_seconds=None,
+                            attempts=1,
+                            error_category=ErrorCategory(raw_error_category),
+                            error_detail=str(
+                                raw.get("error_detail", "BFCL inference failed")
+                            ),
+                            response={
+                                "upstream_error": str(
+                                    raw.get(
+                                        "error_detail",
+                                        "BFCL inference failed",
+                                    )
+                                )
+                            },
+                            artifact_paths=_source_artifacts(
+                                normalized_path.relative_to(context.workspace),
+                                raw.get("source_path"),
+                            ),
+                        )
+                        continue
+                    score = float(raw["score"])
+                    task_id = str(raw.get("task_id", f"record-{line_number}"))
                     yield result_from_spec(
                         context.spec,
-                        task_id=str(raw.get("task_id", f"record-{line_number}")),
+                        task_id=task_id,
+                        status=TaskStatus.PASS if score == 1 else TaskStatus.FAIL,
+                        score=score,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        latency_seconds=(
+                            float(raw["latency_seconds"])
+                            if isinstance(raw.get("latency_seconds"), int | float)
+                            and not isinstance(raw["latency_seconds"], bool)
+                            else None
+                        ),
+                        response={"upstream_record": raw.get("record")},
+                        error_category=(
+                            ErrorCategory.NONE
+                            if score == 1
+                            else _failure_category(task_id)
+                        ),
+                        artifact_paths=_source_artifacts(
+                            normalized_path.relative_to(context.workspace),
+                            raw.get("source_path"),
+                        ),
+                    )
+
+        if error_path.exists():
+            error_record_count = 0
+            with error_path.open(encoding="utf-8") as errors:
+                for line in errors:
+                    if not line.strip():
+                        continue
+                    error_record_count += 1
+                    error: dict[str, Any] = json.loads(line)
+                    subset = str(error.get("subset", "unknown"))
+                    yield result_from_spec(
+                        context.spec,
+                        task_id=f"__subset__/{subset}",
                         status=TaskStatus.ERROR,
                         started_at=started_at,
                         finished_at=finished_at,
                         latency_seconds=None,
                         attempts=1,
-                        error_category=ErrorCategory(raw_error_category),
-                        error_detail=str(
-                            raw.get("error_detail", "BFCL inference failed")
+                        error_category=ErrorCategory.INFRASTRUCTURE,
+                        error_detail=(
+                            f"{error.get('error_type', 'Error')}: "
+                            f"{error.get('error_detail', 'BFCL subset failed')}"
                         ),
-                        response={
-                            "upstream_error": str(
-                                raw.get("error_detail", "BFCL inference failed")
-                            )
-                        },
                         artifact_paths=(
-                            str(normalized_path.relative_to(context.workspace)),
-                            str(raw.get("source_path", "")),
+                            str(error_path.relative_to(context.workspace)),
+                            *artifacts,
                         ),
                     )
-                    continue
-                score = float(raw["score"])
-                yield result_from_spec(
-                    context.spec,
-                    task_id=str(raw.get("task_id", f"record-{line_number}")),
-                    status=TaskStatus.PASS if score == 1 else TaskStatus.FAIL,
-                    score=score,
-                    started_at=started_at,
-                    finished_at=finished_at,
-                    latency_seconds=(
-                        float(raw["latency_seconds"])
-                        if isinstance(raw.get("latency_seconds"), int | float)
-                        and not isinstance(raw["latency_seconds"], bool)
-                        else None
-                    ),
-                    response={"upstream_record": raw.get("record")},
-                    artifact_paths=(
-                        str(normalized_path.relative_to(context.workspace)),
-                        str(raw.get("source_path", "")),
-                    ),
-                )
-
-        if error_path.exists():
-            error_record_count = 0
-            for line in error_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                error_record_count += 1
-                error: dict[str, Any] = json.loads(line)
-                subset = str(error.get("subset", "unknown"))
-                yield result_from_spec(
-                    context.spec,
-                    task_id=f"__subset__/{subset}",
-                    status=TaskStatus.ERROR,
-                    started_at=started_at,
-                    finished_at=finished_at,
-                    latency_seconds=None,
-                    attempts=1,
-                    error_category=ErrorCategory.INFRASTRUCTURE,
-                    error_detail=(
-                        f"{error.get('error_type', 'Error')}: "
-                        f"{error.get('error_detail', 'BFCL subset failed')}"
-                    ),
-                    artifact_paths=(
-                        str(error_path.relative_to(context.workspace)),
-                        *artifacts,
-                    ),
-                )
         else:
             error_record_count = 0
 
