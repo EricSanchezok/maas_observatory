@@ -68,11 +68,14 @@ def normalize_outputs(
 ) -> list[dict[str, Any]]:
     """Read only per-sample reviews; reports and predictions are never scored."""
 
-    review_root = output_root / "cache" / "reviews"
     normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
     for subset in expected_subsets:
-        review_files = sorted(review_root.rglob(f"bfcl_v4_{subset}.jsonl"))
+        review_files = sorted(
+            path
+            for path in output_root.rglob(f"bfcl_v4_{subset}.jsonl")
+            if "reviews" in path.parts
+        )
         if len(review_files) != 1:
             raise ValueError(
                 f"expected one BFCL review file for {subset}, found {len(review_files)}"

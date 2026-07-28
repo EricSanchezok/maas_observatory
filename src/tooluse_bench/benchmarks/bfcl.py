@@ -149,7 +149,8 @@ class BFCLAdapter(BenchmarkAdapter):
             str(outcome.stderr_path.relative_to(context.workspace)),
         )
         normalized_path = output_root / "adapter-results.jsonl"
-        if outcome.return_code != 0 or not normalized_path.exists():
+        error_path = output_root / "adapter-errors.jsonl"
+        if not normalized_path.exists() and not error_path.exists():
             category = (
                 ErrorCategory.TIMEOUT
                 if outcome.return_code == 124
@@ -169,27 +170,86 @@ class BFCLAdapter(BenchmarkAdapter):
             )
             return
 
-        for line_number, line in enumerate(
-            normalized_path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            raw: dict[str, Any] = json.loads(line)
-            score = float(raw["score"])
+        if normalized_path.exists():
+            for line_number, line in enumerate(
+                normalized_path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if not line.strip():
+                    continue
+                raw: dict[str, Any] = json.loads(line)
+                score = float(raw["score"])
+                yield result_from_spec(
+                    context.spec,
+                    task_id=str(raw.get("task_id", f"record-{line_number}")),
+                    status=TaskStatus.PASS if score == 1 else TaskStatus.FAIL,
+                    score=score,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    latency_seconds=(
+                        float(raw["latency_seconds"])
+                        if isinstance(raw.get("latency_seconds"), int | float)
+                        and not isinstance(raw["latency_seconds"], bool)
+                        else None
+                    ),
+                    response={"upstream_record": raw.get("record")},
+                    artifact_paths=(
+                        str(normalized_path.relative_to(context.workspace)),
+                        str(raw.get("source_path", "")),
+                    ),
+                )
+
+        if error_path.exists():
+            error_record_count = 0
+            for line in error_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                error_record_count += 1
+                error: dict[str, Any] = json.loads(line)
+                subset = str(error.get("subset", "unknown"))
+                yield result_from_spec(
+                    context.spec,
+                    task_id=f"__subset__/{subset}",
+                    status=TaskStatus.ERROR,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    latency_seconds=None,
+                    attempts=1,
+                    error_category=ErrorCategory.INFRASTRUCTURE,
+                    error_detail=(
+                        f"{error.get('error_type', 'Error')}: "
+                        f"{error.get('error_detail', 'BFCL subset failed')}"
+                    ),
+                    artifact_paths=(
+                        str(error_path.relative_to(context.workspace)),
+                        *artifacts,
+                    ),
+                )
+        else:
+            error_record_count = 0
+
+        if outcome.return_code == 124:
             yield result_from_spec(
                 context.spec,
-                task_id=str(raw.get("task_id", f"record-{line_number}")),
-                status=TaskStatus.PASS if score == 1 else TaskStatus.FAIL,
-                score=score,
+                task_id="__benchmark__",
+                status=TaskStatus.ERROR,
                 started_at=started_at,
                 finished_at=finished_at,
-                latency_seconds=(
-                    float(raw["latency_seconds"])
-                    if isinstance(raw.get("latency_seconds"), int | float)
-                    and not isinstance(raw["latency_seconds"], bool)
-                    else None
-                ),
-                response={"upstream_record": raw.get("record")},
-                artifact_paths=(
-                    str(normalized_path.relative_to(context.workspace)),
-                    str(raw.get("source_path", "")),
-                ),
+                latency_seconds=outcome.wall_seconds,
+                attempts=1,
+                error_category=ErrorCategory.TIMEOUT,
+                error_detail="BFCL runtime exceeded the configured timeout",
+                artifact_paths=artifacts,
+            )
+        elif outcome.return_code != 0 and error_record_count == 0:
+            yield result_from_spec(
+                context.spec,
+                task_id="__benchmark__",
+                status=TaskStatus.ERROR,
+                started_at=started_at,
+                finished_at=finished_at,
+                latency_seconds=outcome.wall_seconds,
+                attempts=1,
+                error_category=ErrorCategory.INFRASTRUCTURE,
+                error_detail=f"BFCL runtime exited with code {outcome.return_code}",
+                artifact_paths=artifacts,
             )

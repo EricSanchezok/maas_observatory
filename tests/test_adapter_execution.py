@@ -236,6 +236,18 @@ def test_bfcl_adapter_normalizes_results_and_failures(tmp_path: Path) -> None:
             ),
             encoding="utf-8",
         )
+        errors = adapter_context.workspace / "upstream" / "adapter-errors.jsonl"
+        errors.write_text(
+            json.dumps(
+                {
+                    "subset": "web_search_base",
+                    "error_type": "MissingCredential",
+                    "error_detail": "SERPAPI_API_KEY is required",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         return command_outcome(adapter_context.workspace)
 
     with patch(
@@ -246,8 +258,10 @@ def test_bfcl_adapter_normalizes_results_and_failures(tmp_path: Path) -> None:
     assert [result.status for result in results] == [
         TaskStatus.PASS,
         TaskStatus.FAIL,
+        TaskStatus.ERROR,
     ]
-    assert [result.latency_seconds for result in results] == [0.5, None]
+    assert [result.latency_seconds for result in results] == [0.5, None, None]
+    assert results[-1].task_id == "__subset__/web_search_base"
     spec = json.loads(
         (adapter_context.workspace / "bfcl-spec.json").read_text(encoding="utf-8")
     )
@@ -265,6 +279,59 @@ def test_bfcl_adapter_normalizes_results_and_failures(tmp_path: Path) -> None:
     ):
         [failure] = list(BFCLAdapter().run(timeout_context))
     assert failure.error_category is ErrorCategory.TIMEOUT
+
+    partial_context = context(
+        tmp_path / "partial-timeout",
+        benchmark_id="bfcl-v4",
+        profile="core",
+    )
+
+    def partial_timeout(*args, **kwargs) -> CommandOutcome:
+        del args, kwargs
+        output = partial_context.workspace / "upstream" / "adapter-results.jsonl"
+        output.write_text(
+            json.dumps(
+                {
+                    "task_id": "completed-before-timeout",
+                    "score": 1,
+                    "record": {},
+                    "source_path": "reviews/completed.jsonl",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return command_outcome(partial_context.workspace, return_code=124)
+
+    with patch(
+        "tooluse_bench.benchmarks.bfcl.run_logged_command",
+        side_effect=partial_timeout,
+    ):
+        partial_results = list(BFCLAdapter().run(partial_context))
+    assert [result.status for result in partial_results] == [
+        TaskStatus.PASS,
+        TaskStatus.ERROR,
+    ]
+    assert partial_results[-1].error_category is ErrorCategory.TIMEOUT
+
+    crashed_context = context(
+        tmp_path / "unexpected-exit",
+        benchmark_id="bfcl-v4",
+        profile="core",
+    )
+
+    def unexpected_exit(*args, **kwargs) -> CommandOutcome:
+        del args, kwargs
+        output = crashed_context.workspace / "upstream" / "adapter-results.jsonl"
+        output.write_text("", encoding="utf-8")
+        return command_outcome(crashed_context.workspace, return_code=9)
+
+    with patch(
+        "tooluse_bench.benchmarks.bfcl.run_logged_command",
+        side_effect=unexpected_exit,
+    ):
+        [crash] = list(BFCLAdapter().run(crashed_context))
+    assert crash.error_category is ErrorCategory.INFRASTRUCTURE
 
 
 def test_toolathlon_adapter_normalizes_results_and_validates_options(

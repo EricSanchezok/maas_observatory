@@ -33,7 +33,9 @@ maximum output allowance.
 BFCL provides task-level function-calling diagnostics across simple, parallel,
 multi-turn, irrelevance, long-context, web-search, and memory subsets. The
 adapter delegates evaluation to an isolated pinned runtime. Subset scores are
-preserved; BFCL is not treated as proof of long-horizon agent success.
+preserved; BFCL is not treated as proof of long-horizon agent success. The
+runtime executes and fsyncs one subset at a time, so an unavailable external
+service or one subset-level verifier failure cannot erase completed subsets.
 
 ### Toolathlon-Verified
 
