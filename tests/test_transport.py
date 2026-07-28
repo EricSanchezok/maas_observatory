@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 import httpx
@@ -241,3 +243,44 @@ def test_transport_rejects_non_object_json_and_closes_owned_client() -> None:
     ):
         pass
     client_type.return_value.close.assert_called_once_with()
+
+
+def test_spawned_wall_worker_can_reach_a_real_http_server() -> None:
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            content_length = int(self.headers.get("content-length", "0"))
+            self.rfile.read(content_length)
+            body = b'{"ok":true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    deployment = load_catalog()[0]
+    host, port = server.server_address
+    values = {
+        deployment.endpoint.base_url_env: f"http://{host}:{port}/v1",
+        deployment.endpoint.api_key_env: "test-secret",
+    }
+    try:
+        with (
+            patch.dict(os.environ, values, clear=False),
+            OpenAITransport(
+                deployment,
+                timeout_seconds=2,
+                wall_timeout_seconds=5,
+            ) as transport,
+        ):
+            response = transport.chat_completion({})
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
+    assert response.payload == {"ok": True}

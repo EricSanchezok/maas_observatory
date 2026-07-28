@@ -41,7 +41,7 @@ Native-transport experiments may set `transport_timeout_seconds`,
 `transport_wall_timeout_seconds`, and `transport_max_retries` in benchmark
 options. The protocol smoke uses a 90-second inactivity timeout, a 30-second
 POSIX wall-clock deadline, and no retry so an unavailable endpoint cannot stall
-the diagnostic gate. Deadline-bound requests run in an isolated forked worker
+the diagnostic gate. Real deadline-bound requests run in a clean spawned worker
 that the parent can terminate; credentials remain in process memory and never
 enter the command line. The release plan retains the transport defaults.
 

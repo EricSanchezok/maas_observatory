@@ -66,11 +66,13 @@ def _post_with_deadline(
     headers: dict[str, str],
     seconds: float,
 ) -> httpx.Response:
+    start_method = "spawn" if client is None else "fork"
     try:
-        process_context = multiprocessing.get_context("fork")
+        process_context: Any = multiprocessing.get_context(start_method)
     except ValueError as exc:
         raise RuntimeError(
-            "wall-clock request deadlines require POSIX fork support"
+            f"wall-clock request deadline requires {start_method!r} "
+            "multiprocessing support"
         ) from exc
     receiver, sender = process_context.Pipe(duplex=False)
     worker = process_context.Process(
