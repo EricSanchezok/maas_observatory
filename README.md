@@ -106,7 +106,7 @@ uv run tooluse-bench publication validate
 Private runs are append-only under `runs/` and never tracked. A release bundle
 contains sanitized trajectories, a manifest, completion record, aggregate
 metrics, adapter execution audits, report, report-builder provenance, data
-license, and SHA-256 checksums.
+license, deterministic SVG/PNG benchmark overview, and SHA-256 checksums.
 Execution audits disclose resource controls, process outcomes, and observable
 SDK retry counts without publishing credentials or endpoint URLs. The
 deterministic archive can be attached to an immutable GitHub Release.
@@ -117,6 +117,11 @@ record counts, timestamps, checksums, secret scan, and generated results page.
 Each snapshot also retains the source release's checksum manifest plus its
 exact report and metrics, so derived summaries are traceable to the archive.
 The complete sanitized trajectories remain only in that release archive.
+
+The overview figure is generated from validated `metrics.json`, never edited by
+hand. Same-benchmark official scores use diamond markers; contextual values
+with different releases, precision, or reasoning settings are labeled
+separately and never produce a cross-benchmark delta.
 
 Model-catalog `profiles` describe candidate serving or reasoning modes supplied
 by the operator. They are not silently activated by the harness. A published

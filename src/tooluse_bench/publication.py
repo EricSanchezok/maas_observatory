@@ -26,9 +26,10 @@ from tooluse_bench.release import (
 )
 from tooluse_bench.reporting import AggregateResult
 from tooluse_bench.store import sha256_file
+from tooluse_bench.visualization import FIGURE_FILES, FigureMetadata
 
 PUBLIC_RESULTS_ROOT = PROJECT_ROOT / "public-results"
-EXPECTED_SNAPSHOT_FILES = {
+BASE_SNAPSHOT_FILES = {
     "checksums.sha256",
     "completion.json",
     "manifest.json",
@@ -40,6 +41,8 @@ EXPECTED_SNAPSHOT_FILES = {
     "report.md",
     "snapshot.json",
 }
+FIGURE_SNAPSHOT_FILES = {*FIGURE_FILES, "figure-metadata.json"}
+EXPECTED_SNAPSHOT_FILES = BASE_SNAPSHOT_FILES | FIGURE_SNAPSHOT_FILES
 MAX_PUBLIC_FILE_BYTES = 2 * 1024 * 1024
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 SNAPSHOT_PATH_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
@@ -189,7 +192,10 @@ def build_public_snapshot(
         staging = Path(temporary) / release.run_id
         staging.mkdir()
         source_copies = {
+            "benchmark-overview.png": "benchmark-overview.png",
+            "benchmark-overview.svg": "benchmark-overview.svg",
             "completion.json": "completion.json",
+            "figure-metadata.json": "figure-metadata.json",
             "manifest.json": "manifest.json",
             "release-checksums.sha256": "checksums.sha256",
             "release-metadata.json": "release-metadata.json",
@@ -274,9 +280,21 @@ def validate_public_snapshot(
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError(f"public snapshot is not a real directory: {directory}")
     files = {path.name for path in directory.iterdir() if path.is_file()}
-    if files != EXPECTED_SNAPSHOT_FILES:
-        missing = sorted(EXPECTED_SNAPSHOT_FILES - files)
-        extra = sorted(files - EXPECTED_SNAPSHOT_FILES)
+    if not files >= BASE_SNAPSHOT_FILES:
+        missing = sorted(BASE_SNAPSHOT_FILES - files)
+        extra = sorted(files - BASE_SNAPSHOT_FILES)
+        raise ValueError(
+            f"invalid public snapshot files; missing={missing}, extra={extra}"
+        )
+    release = ReleaseMetadata.model_validate(
+        _load_json(directory / "release-metadata.json")
+    )
+    expected_snapshot_files = BASE_SNAPSHOT_FILES | (
+        FIGURE_SNAPSHOT_FILES if release.schema_version >= 3 else set()
+    )
+    if files != expected_snapshot_files:
+        missing = sorted(expected_snapshot_files - files)
+        extra = sorted(files - expected_snapshot_files)
         raise ValueError(
             f"invalid public snapshot files; missing={missing}, extra={extra}"
         )
@@ -285,13 +303,21 @@ def validate_public_snapshot(
 
     scanner = redactor or Redactor.from_catalog(load_model_catalog())
     for path in sorted(directory.iterdir()):
+        if path.name == "benchmark-overview.png":
+            if path.is_symlink() or not path.is_file():
+                raise ValueError(f"public result path is not a regular file: {path}")
+            if path.stat().st_size > MAX_PUBLIC_FILE_BYTES:
+                raise ValueError(f"public result file exceeds size limit: {path}")
+            if not path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("public benchmark-overview.png is not a valid PNG")
+            continue
         _validate_regular_text_file(path)
         findings = scanner.findings(path.read_text(encoding="utf-8"))
         if findings:
             raise ValueError(f"{path} contains: {', '.join(findings)}")
 
     expected = _load_checksums(directory / "checksums.sha256")
-    expected_names = EXPECTED_SNAPSHOT_FILES - {"checksums.sha256"}
+    expected_names = expected_snapshot_files - {"checksums.sha256"}
     if set(expected) != expected_names:
         raise ValueError("public snapshot checksum inventory does not match files")
     actual = {
@@ -302,9 +328,6 @@ def validate_public_snapshot(
     if expected != actual:
         raise ValueError("public snapshot checksums do not match")
 
-    release = ReleaseMetadata.model_validate(
-        _load_json(directory / "release-metadata.json")
-    )
     release_files = release_file_inventory(release.schema_version)
     release_checksums = _load_checksums(directory / "release-checksums.sha256")
     if set(release_checksums) != release_files - {"checksums.sha256"}:
@@ -316,6 +339,14 @@ def validate_public_snapshot(
         "release-metrics.json": "metrics.json",
         "release-report.md": "report.md",
     }
+    if release.schema_version >= 3:
+        release_sources.update(
+            {
+                "benchmark-overview.png": "benchmark-overview.png",
+                "benchmark-overview.svg": "benchmark-overview.svg",
+                "figure-metadata.json": "figure-metadata.json",
+            }
+        )
     for snapshot_name, release_name in release_sources.items():
         if sha256_file(directory / snapshot_name) != release_checksums[release_name]:
             raise ValueError(
@@ -366,6 +397,21 @@ def validate_public_snapshot(
         raise ValueError("public snapshot Git commits do not match")
     if set(release.files) != release_files:
         raise ValueError("public snapshot release file inventory does not match")
+    if release.schema_version >= 3:
+        figure_metadata = FigureMetadata.model_validate(
+            _load_json(directory / "figure-metadata.json")
+        )
+        if figure_metadata.run_id != manifest.run_id:
+            raise ValueError("public figure run ID does not match")
+        if figure_metadata.source_metrics_sha256 != sha256_file(
+            directory / "metrics.json"
+        ):
+            raise ValueError("public figure source metric hash does not match")
+        if figure_metadata.baseline_registry_sha256 != release.baseline_registry_sha256:
+            raise ValueError("public figure baseline registry hash does not match")
+        for filename in FIGURE_FILES:
+            if figure_metadata.files[filename] != sha256_file(directory / filename):
+                raise ValueError(f"public figure hash does not match: {filename}")
     release_created_at = datetime.fromisoformat(release.created_at)
     if (
         snapshot.created_at != manifest.created_at
@@ -454,6 +500,16 @@ def render_public_results_markdown(root: Path = PUBLIC_RESULTS_ROOT) -> str:
         if snapshot.notes:
             sections.extend(("", *[f"- {note}" for note in snapshot.notes]))
         sections.append("")
+        figure_path = root / reference.path / "benchmark-overview.png"
+        if figure_path.is_file():
+            sections.extend(
+                (
+                    '<img src="../public-results/'
+                    f'{reference.path}/benchmark-overview.png" '
+                    f'alt="Benchmark overview for {snapshot.run_id}">',
+                    "",
+                )
+            )
         report = (root / reference.path / "report.md").read_text(encoding="utf-8")
         report_lines = report.rstrip().splitlines()
         if report_lines and report_lines[0].startswith("# "):

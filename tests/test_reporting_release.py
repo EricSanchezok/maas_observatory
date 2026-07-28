@@ -47,9 +47,10 @@ from tooluse_bench.release import (
 )
 from tooluse_bench.reporting import aggregate_results, build_report, load_results
 from tooluse_bench.store import RunStore, sha256_file
+from tooluse_bench.visualization import FigureMetadata
 
 RUN_ID = "run-report-test"
-DEPLOYMENT_ID = "sii-holos-deepseek-v4-pro"
+DEPLOYMENT_ID = "sii-holos-deepseek-v4-pro-w4a8"
 
 
 def baseline_registry(
@@ -335,6 +336,21 @@ def test_report_and_release_are_valid_sanitized_and_deterministic(
     assert (
         "No cross-benchmark composite" in (report_directory / "report.md").read_text()
     )
+    assert (
+        (report_directory / "benchmark-overview.png")
+        .read_bytes()
+        .startswith(b"\x89PNG\r\n\x1a\n")
+    )
+    figure_metadata = FigureMetadata.model_validate_json(
+        (report_directory / "figure-metadata.json").read_text(encoding="utf-8")
+    )
+    assert figure_metadata.source_metrics_sha256 == sha256_file(
+        report_directory / "metrics.json"
+    )
+    figure_svg = (report_directory / "benchmark-overview.svg").read_text(
+        encoding="utf-8"
+    )
+    assert "official ◇ 50.0" in figure_svg
     assert len(load_results(run_directory / "results.jsonl")) == 6
 
     deployment = load_model_catalog().deployments[0]

@@ -118,6 +118,9 @@ The publication builder accepts only a validated release directory and its
 matching deterministic archive. It derives the lightweight snapshot, verifies
 all cross-file identities and checksums, updates the public index atomically,
 and regenerates the results page when using the repository default output.
+The report builder also emits a deterministic SVG and high-resolution PNG from
+`metrics.json`; `figure-metadata.json` binds both files to the metrics hash,
+run ID, package version, and builder commit.
 
 Before upload, inspect the complete staging directory manually and record the
 archive SHA-256 in the GitHub Release notes.

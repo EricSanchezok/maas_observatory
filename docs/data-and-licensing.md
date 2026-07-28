@@ -22,6 +22,10 @@ execution audits, checksums, and the data license. Private URLs, keys,
 authorization headers, local user paths, and unpublished raw run directories
 are excluded.
 
+Generated SVG/PNG figures are part of the CC BY 4.0 result bundle. They contain
+only deployment labels, aggregates, official baseline registry values, and
+provenance—not prompts, responses, endpoints, or credentials.
+
 When reusing a result, cite the project, release tag, run ID, archive checksum,
 benchmark release, and access date. Do not remove provenance or imply that a
 contextual vendor score is an exact control.

@@ -45,6 +45,9 @@ uv run tooluse-bench publication validate
 发布链路会递归脱敏 URL、密钥、鉴权头和本机路径，并生成 SHA-256 校验文件与确定性
 压缩包。只有 benchmark 版本、评测 harness、模型精度、推理设置和部署身份都严格
 对齐时，系统才允许计算相对官方分数的差值；其他官方数据只作为带来源的背景信息。
+报告会从验证后的聚合数据自动生成 SVG 与高分辨率 PNG：同 benchmark 官方值以
+菱形标记对照，不同版本、精度或 reasoning 设置的值明确标为 contextual，跨
+benchmark 不计算差值。
 
 更多内容见：
 

@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from tooluse_bench.config import PROJECT_ROOT
 from tooluse_bench.publication import (
-    EXPECTED_SNAPSHOT_FILES,
     PublicResultIndex,
     PublicSnapshotMetadata,
     render_public_results_markdown,
@@ -42,7 +41,11 @@ def write_json(path: Path, payload: object) -> None:
 def refresh_checksums(directory: Path) -> None:
     entries = [
         f"{sha256_file(directory / name)}  {name}"
-        for name in sorted(EXPECTED_SNAPSHOT_FILES - {"checksums.sha256"})
+        for name in sorted(
+            path.name
+            for path in directory.iterdir()
+            if path.is_file() and path.name != "checksums.sha256"
+        )
     ]
     (directory / "checksums.sha256").write_text(
         "\n".join(entries) + "\n",

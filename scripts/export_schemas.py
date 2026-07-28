@@ -12,12 +12,14 @@ from tooluse_bench.publication import PublicResultIndex, PublicSnapshotMetadata
 from tooluse_bench.records import ExecutionAudit, RunCompletion, RunManifest, TaskResult
 from tooluse_bench.release import ReleaseMetadata
 from tooluse_bench.reporting import AggregateResult, ReportMetadata
+from tooluse_bench.visualization import FigureMetadata
 
 SCHEMAS = {
     "baseline-registry.schema.json": BaselineRegistry,
     "aggregate-result.schema.json": AggregateResult,
     "experiment.schema.json": ExperimentPlan,
     "execution-audit.schema.json": ExecutionAudit,
+    "figure-metadata.schema.json": FigureMetadata,
     "model-catalog.schema.json": ModelCatalog,
     "public-result-index.schema.json": PublicResultIndex,
     "public-snapshot-metadata.schema.json": PublicSnapshotMetadata,

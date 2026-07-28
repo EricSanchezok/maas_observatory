@@ -28,6 +28,7 @@ from tooluse_bench.records import (
     TaskStatus,
 )
 from tooluse_bench.store import canonical_json, sha256_file
+from tooluse_bench.visualization import build_benchmark_figure
 
 
 class ReportMetadata(StrictModel):
@@ -693,6 +694,13 @@ def build_report(
         )
         + "\n",
         encoding="utf-8",
+    )
+    build_benchmark_figure(
+        report_directory,
+        manifest,
+        aggregates,
+        metadata,
+        registry,
     )
     fieldnames = list(AggregateResult.model_fields)
     with (report_directory / "metrics.csv").open(

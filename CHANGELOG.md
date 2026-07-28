@@ -10,6 +10,8 @@ public data formats.
 
 - Add report-builder provenance and release schema v3.
 - Add validated, atomic public-snapshot construction and CLI commands.
+- Add deterministic SVG/PNG benchmark figures with BFCL subset diagnostics and
+  explicitly labeled official/contextual reference values.
 - Preserve BFCL per-subset coverage and distinguish inference transport errors
   from capability failures.
 - Require official-reproduction lane and exact configuration digest for

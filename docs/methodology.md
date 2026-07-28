@@ -97,3 +97,16 @@ leaderboard figures as contextual until a same-harness reproduction proves
 alignment.
 
 No composite across unrelated benchmarks is reported.
+
+## Figures
+
+The release overview is rendered deterministically from the canonical
+aggregate JSON. Solid blue bars show observed Pass@1; hatched amber segments
+show transport or infrastructure errors; missing evidence remains visibly
+unscored. BFCL subset cells preserve partial-coverage markers.
+
+An official score on the same benchmark is shown as a diamond beside the
+internal deployment. A filled diamond is reserved for an exact comparison; an
+open diamond is contextual. Official scores from different benchmarks are
+listed in a separate context panel with their benchmark and metric names. They
+never share a computed delta with the internal score.

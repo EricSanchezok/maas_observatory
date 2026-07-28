@@ -27,6 +27,7 @@ from tooluse_bench.records import (
 from tooluse_bench.redaction import Redactor
 from tooluse_bench.reporting import ReportMetadata, load_completed_run
 from tooluse_bench.store import sha256_file
+from tooluse_bench.visualization import FIGURE_FILES, FigureMetadata
 
 RELEASE_FILES_V1 = frozenset(
     {
@@ -42,7 +43,12 @@ RELEASE_FILES_V1 = frozenset(
     }
 )
 RELEASE_FILES_V2 = RELEASE_FILES_V1 | {"execution-audits.json"}
-RELEASE_FILES_V3 = RELEASE_FILES_V2 | {"report-metadata.json"}
+RELEASE_FILES_V3 = RELEASE_FILES_V2 | {
+    "benchmark-overview.png",
+    "benchmark-overview.svg",
+    "figure-metadata.json",
+    "report-metadata.json",
+}
 EXPECTED_RELEASE_FILES = RELEASE_FILES_V3
 EXECUTION_AUDIT_LIST = TypeAdapter(list[ExecutionAudit])
 MAX_RELEASE_TEXT_FILE_BYTES = 64 * 1024 * 1024
@@ -255,6 +261,9 @@ def build_release(
         report_directory / "metrics.csv",
         report_directory / "report.md",
         report_directory / "report-metadata.json",
+        report_directory / "figure-metadata.json",
+        report_directory / "benchmark-overview.svg",
+        report_directory / "benchmark-overview.png",
     ]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
@@ -283,6 +292,13 @@ def build_release(
         destination / "report-metadata.json",
         redactor,
     )
+    _write_sanitized_json(
+        required[7],
+        destination / "figure-metadata.json",
+        redactor,
+    )
+    shutil.copyfile(required[8], destination / "benchmark-overview.svg")
+    shutil.copyfile(required[9], destination / "benchmark-overview.png")
     _write_sanitized_results(
         required[2],
         destination / "results.jsonl.gz",
@@ -363,6 +379,12 @@ def validate_release(
             except (gzip.BadGzipFile, UnicodeDecodeError, OSError) as exc:
                 raise ValueError("results.jsonl.gz is not valid UTF-8 gzip") from exc
             continue
+        if path.name == "benchmark-overview.png":
+            if path.stat().st_size > MAX_RELEASE_TEXT_FILE_BYTES:
+                raise ValueError("release PNG exceeds safety limit")
+            if not path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("benchmark-overview.png is not a valid PNG")
+            continue
         if path.stat().st_size > MAX_RELEASE_TEXT_FILE_BYTES:
             raise ValueError(f"release text file exceeds safety limit: {path.name}")
         text = path.read_text(encoding="utf-8")
@@ -437,6 +459,28 @@ def validate_release(
             != report_metadata.baseline_registry_sha256
         ):
             raise ValueError("baseline registry hashes do not match")
+        figure_metadata = FigureMetadata.model_validate_json(
+            (directory / "figure-metadata.json").read_text(encoding="utf-8")
+        )
+        if figure_metadata.run_id != manifest.run_id:
+            raise ValueError("figure metadata run_id does not match manifest")
+        if figure_metadata.source_metrics_sha256 != sha256_file(
+            directory / "metrics.json"
+        ):
+            raise ValueError("figure source metric hash does not match")
+        if (
+            figure_metadata.figure_builder_git_commit
+            != report_metadata.report_builder_git_commit
+        ):
+            raise ValueError("figure and report builder Git commits do not match")
+        if (
+            figure_metadata.baseline_registry_sha256
+            != report_metadata.baseline_registry_sha256
+        ):
+            raise ValueError("figure and report baseline registry hashes do not match")
+        for filename in FIGURE_FILES:
+            if figure_metadata.files[filename] != sha256_file(directory / filename):
+                raise ValueError(f"figure hash does not match: {filename}")
     result_count = 0
     status_counts: Counter[TaskStatus] = Counter()
     with gzip.open(
