@@ -62,6 +62,27 @@ class BenchmarkAdapter(ABC):
     def needs_native_transport(self) -> bool:
         return False
 
+    def prepare(self, context: AdapterContext) -> None:
+        """Prepare trial-scoped files or state before benchmark execution."""
+
+        del context
+
     @abstractmethod
     def run(self, context: AdapterContext) -> Iterable[TaskResult]:
-        """Execute one deployment/lane/trial and return normalized records."""
+        """Execute one deployment/lane/trial and yield candidate task records."""
+
+    def collect(
+        self,
+        context: AdapterContext,
+        records: Iterable[TaskResult],
+    ) -> Iterable[TaskResult]:
+        """Collect or normalize records emitted by the execution phase."""
+
+        del context
+        yield from records
+
+    def score(self, context: AdapterContext, record: TaskResult) -> TaskResult:
+        """Apply final benchmark-specific scoring to one normalized record."""
+
+        del context
+        return record

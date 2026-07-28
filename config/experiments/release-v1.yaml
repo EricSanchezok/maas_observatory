@@ -19,3 +19,5 @@ benchmarks:
     trials: 3
     options:
       backend: self-hosted
+      server_revision: 2aed2468858f15818acafa178518390cc4b0f5cb
+      task_image: docker.io/lockon0927/toolathlon-task-image@sha256:4d04fe4e0a6fdb4946f51bb05120cb44a0eef980231c11252f93b62897afcb9f

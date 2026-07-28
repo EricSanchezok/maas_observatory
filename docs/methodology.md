@@ -39,7 +39,11 @@ preserved; BFCL is not treated as proof of long-horizon agent success.
 
 Toolathlon evaluates long-chain use of many real tools with programmatic
 verification. The default configuration uses a self-hosted service at a pinned
-revision to avoid public-service quotas and uncontrolled changes.
+revision to avoid public-service quotas and uncontrolled changes. Both the
+official source commit and the upstream task-container image digest are fixed
+in the experiment. Before execution, the operator must attest that the remote
+service uses those values. This catches configuration drift but is not a
+cryptographic remote-attestation protocol.
 
 ## Repetitions and metrics
 

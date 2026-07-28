@@ -27,6 +27,10 @@ uv run tooluse-bench benchmarks validate
 uv run tooluse-bench run --experiment config/experiments/release-v1.yaml
 ```
 
+BFCL 全量 web-search 子集需要 `SERPAPI_API_KEY`。自托管 Toolathlon 服务还需按
+`benchmark-envs/toolathlon/README.md` 固定上游提交与任务镜像 digest，并在环境
+变量中声明这两项部署证明。
+
 私有运行记录写入 `runs/`。报告和公开发布包必须显式生成：
 
 ```bash

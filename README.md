@@ -59,9 +59,11 @@ uv sync --project benchmark-envs/bfcl --frozen
 uv sync --project benchmark-envs/toolathlon --frozen
 ```
 
-BFCL web-search subsets require `SERPAPI_API_KEY`. The hermetic Toolathlon
-profile requires `TOOLATHLON_SERVER_HOST` pointing at a server deployed from
-the pinned revision documented by the adapter.
+BFCL web-search subsets require `SERPAPI_API_KEY`. The controlled self-hosted
+Toolathlon profile requires `TOOLATHLON_SERVER_HOST` pointing at a server
+deployed from the pinned revision and task-image digest documented by the
+adapter. Toolathlon still exercises stateful external applications and is not
+classified as hermetic.
 
 Run the inexpensive three-trial protocol gate before the complete release plan:
 
@@ -92,6 +94,13 @@ contains sanitized trajectories, a manifest, completion record, aggregate
 metrics, report, data license, and SHA-256 checksums. The deterministic archive
 can be attached to an immutable GitHub Release.
 
+Small, reviewable snapshots under `public-results/` are the only result source
+consumed by the Pages site. CI validates their schema, cross-file identities,
+record counts, timestamps, checksums, secret scan, and generated results page.
+Each snapshot also retains the source release's checksum manifest plus its
+exact report and metrics, so derived summaries are traceable to the archive.
+The complete sanitized trajectories remain only in that release archive.
+
 ## Official comparisons
 
 `config/baselines.yaml` is the machine-readable source registry. Published
@@ -116,6 +125,9 @@ uv run ruff check src tests scripts
 uv run mypy src
 uv run pytest --cov=tooluse_bench --cov-report=term-missing
 uv run python scripts/check_schemas.py
+uv run python scripts/check_public_results.py
+uv run python scripts/check_links.py
+uv run python scripts/check_licenses.py
 uv build
 ```
 

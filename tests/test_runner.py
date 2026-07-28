@@ -51,6 +51,29 @@ class PartiallyFailingAdapter(FakeAdapter):
         raise RuntimeError("synthetic adapter failure")
 
 
+class LifecycleAdapter(FakeAdapter):
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def prepare(self, context: AdapterContext) -> None:
+        del context
+        self.events.append("prepare")
+
+    def collect(
+        self,
+        context: AdapterContext,
+        records: Iterable[TaskResult],
+    ) -> Iterable[TaskResult]:
+        del context
+        self.events.append("collect")
+        yield from records
+
+    def score(self, context: AdapterContext, record: TaskResult) -> TaskResult:
+        del context
+        self.events.append("score")
+        return record.model_copy(update={"metrics": {"scored": 1.0}})
+
+
 def test_runner_records_supported_and_unsupported_lanes(tmp_path: Path) -> None:
     experiment = tmp_path / "experiment.yaml"
     experiment.write_text(
@@ -130,3 +153,42 @@ benchmarks:
     assert [record["status"] for record in records] == ["pass", "error"]
     assert records[1]["task_id"] == "__benchmark__"
     assert "synthetic adapter failure" in records[1]["error_detail"]
+
+
+def test_runner_executes_the_complete_adapter_lifecycle(tmp_path: Path) -> None:
+    experiment = tmp_path / "lifecycle.yaml"
+    experiment.write_text(
+        """
+schema_version: 1
+experiment_id: lifecycle-test
+description: Adapter lifecycle test
+models: [deepseek-v4-pro]
+lanes: [standardized]
+output_root: ignored
+benchmarks:
+  - benchmark_id: fake
+    profile: full
+    trials: 1
+    options: {}
+""".lstrip(),
+        encoding="utf-8",
+    )
+    deployment = load_catalog()[0]
+    environment = {
+        deployment.endpoint.base_url_env: "https://endpoint.invalid/v1",
+        deployment.endpoint.api_key_env: "secret",
+    }
+    adapter = LifecycleAdapter()
+    with patch.dict(os.environ, environment, clear=False):
+        directory = run_experiment(
+            experiment_path=experiment,
+            catalog_path=DEFAULT_CATALOG,
+            output_root=tmp_path / "lifecycle-runs",
+            registry=BenchmarkRegistry([adapter]),
+        )
+    [record] = [
+        json.loads(line)
+        for line in (directory / "results.jsonl").read_text().splitlines()
+    ]
+    assert adapter.events == ["prepare", "collect", "score"]
+    assert record["metrics"] == {"scored": 1.0}

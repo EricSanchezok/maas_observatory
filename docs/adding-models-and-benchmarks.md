@@ -22,8 +22,15 @@ Implement `BenchmarkAdapter`, including:
 - immutable metadata with an exact version or source revision;
 - supported profiles and lanes;
 - preflight validation for required infrastructure;
+- `prepare` for trial-scoped setup and `run` for execution;
+- `collect` for output normalization and `score` for final scoring;
 - one schema-valid `TaskResult` for every attempted or explicitly unrun task;
 - stable task IDs and a documented scoring mapping.
+
+All four lifecycle hooks receive the same immutable `AdapterContext`. Defaults
+for `prepare`, `collect`, and `score` are no-op/pass-through, so a simple plugin
+only needs metadata and `run`. The runner owns persistence and appends each
+scored record immediately.
 
 Register the adapter under the `tooluse_bench.benchmarks` entry-point group in
 `pyproject.toml`. Heavy or conflicting dependencies belong in a separate

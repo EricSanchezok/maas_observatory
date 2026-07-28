@@ -22,7 +22,10 @@ uv run tooluse-bench benchmarks validate
 
 A BFCL warning about `SERPAPI_API_KEY` means web-search subsets cannot be fully
 evaluated. A Toolathlon server error means the official profile is not runnable
-with the hermetic default. Do not hide either limitation in a report.
+with the controlled self-hosted configuration. The Toolathlon service must also
+attest the pinned source revision and task-image digest shown in
+`benchmark-envs/toolathlon/README.md`. Do not hide any of these limitations in
+a report.
 
 ## Execute
 

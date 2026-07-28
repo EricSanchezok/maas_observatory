@@ -1,0 +1,12 @@
+{
+  "latest_run_id": "20260728T054932740593Z-protocol-smoke-v1-5f0271f4-8dd04365",
+  "schema_version": 1,
+  "snapshots": [
+    {
+      "path": "20260728T054932740593Z-protocol-smoke-v1-5f0271f4-8dd04365",
+      "run_id": "20260728T054932740593Z-protocol-smoke-v1-5f0271f4-8dd04365",
+      "status": "candidate",
+      "title": "Protocol smoke candidate — 2026-07-28"
+    }
+  ]
+}

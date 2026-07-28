@@ -7,6 +7,9 @@ from unittest.mock import patch
 
 from tooluse_bench.benchmarks.bfcl import ALL_PUBLIC_SUBSETS, BFCLAdapter
 from tooluse_bench.benchmarks.toolathlon import (
+    TOOLATHLON_REVISION,
+    TOOLATHLON_TASK_IMAGE,
+    TOOLATHLON_TASK_IMAGE_DIGEST,
     ToolathlonAdapter,
     _find_eval_results,
 )
@@ -42,8 +45,34 @@ def test_toolathlon_self_hosted_backend_requires_server() -> None:
     )
     with patch.dict(os.environ, {}, clear=True):
         issues = ToolathlonAdapter().validate(selection, load_catalog()[0])
-    assert [issue.code for issue in issues] == ["missing_toolathlon_server"]
-    assert issues[0].level == "error"
+    assert [issue.code for issue in issues] == [
+        "missing_toolathlon_server",
+        "unpinned_toolathlon_server_revision",
+        "unpinned_toolathlon_task_image",
+        "invalid_toolathlon_attestation",
+        "invalid_toolathlon_attestation",
+    ]
+    assert all(issue.level == "error" for issue in issues)
+
+    pinned = selection.model_copy(
+        update={
+            "options": {
+                "backend": "self-hosted",
+                "server_revision": TOOLATHLON_REVISION,
+                "task_image": TOOLATHLON_TASK_IMAGE,
+            }
+        }
+    )
+    with patch.dict(
+        os.environ,
+        {
+            "TOOLATHLON_SERVER_HOST": "server.internal",
+            "TOOLATHLON_SERVER_REVISION": TOOLATHLON_REVISION,
+            "TOOLATHLON_TASK_IMAGE_DIGEST": TOOLATHLON_TASK_IMAGE_DIGEST,
+        },
+        clear=True,
+    ):
+        assert ToolathlonAdapter().validate(pinned, load_catalog()[0]) == ()
 
 
 def test_toolathlon_collector_reads_only_valid_eval_results(

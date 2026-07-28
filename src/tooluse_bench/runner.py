@@ -119,9 +119,11 @@ def _execute_adapter(
             workspace=workspace,
             transport=transport,
         )
+        adapter.prepare(context)
         result_count = 0
-        for result in adapter.run(context):
-            append_result(result)
+        records = adapter.collect(context, adapter.run(context))
+        for record in records:
+            append_result(adapter.score(context, record))
             result_count += 1
         return result_count
     finally:

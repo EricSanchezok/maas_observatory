@@ -1,0 +1,68 @@
+{
+  "$defs": {
+    "PublicSnapshotReference": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+          "title": "Path",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SnapshotStatus"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "path",
+        "title",
+        "status"
+      ],
+      "title": "PublicSnapshotReference",
+      "type": "object"
+    },
+    "SnapshotStatus": {
+      "enum": [
+        "candidate",
+        "released"
+      ],
+      "title": "SnapshotStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "latest_run_id": {
+      "title": "Latest Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "snapshots": {
+      "items": {
+        "$ref": "#/$defs/PublicSnapshotReference"
+      },
+      "minItems": 1,
+      "title": "Snapshots",
+      "type": "array"
+    }
+  },
+  "required": [
+    "latest_run_id",
+    "snapshots"
+  ],
+  "title": "PublicResultIndex",
+  "type": "object"
+}

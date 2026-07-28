@@ -28,6 +28,12 @@ from tooluse_bench.records import (
 
 TOOLATHLON_REPOSITORY = "https://github.com/hkust-nlp/Toolathlon.git"
 TOOLATHLON_REVISION = "2aed2468858f15818acafa178518390cc4b0f5cb"
+TOOLATHLON_TASK_IMAGE_DIGEST = (
+    "sha256:4d04fe4e0a6fdb4946f51bb05120cb44a0eef980231c11252f93b62897afcb9f"
+)
+TOOLATHLON_TASK_IMAGE = (
+    "docker.io/lockon0927/toolathlon-task-image@" + TOOLATHLON_TASK_IMAGE_DIGEST
+)
 PUBLIC_SERVER_HOST = "47.253.6.47"
 
 
@@ -90,7 +96,7 @@ class ToolathlonAdapter(BenchmarkAdapter):
             version="verified-2026-06-30",
             source_url="https://github.com/hkust-nlp/Toolathlon",
             revision=TOOLATHLON_REVISION,
-            hermetic_default=True,
+            hermetic_default=False,
             supported_profiles=("smoke", "official"),
         )
 
@@ -118,6 +124,35 @@ class ToolathlonAdapter(BenchmarkAdapter):
                     ),
                 )
             )
+        if backend == "self-hosted":
+            expected_options = {
+                "server_revision": TOOLATHLON_REVISION,
+                "task_image": TOOLATHLON_TASK_IMAGE,
+            }
+            for option, expected in expected_options.items():
+                if selection.options.get(option) != expected:
+                    issues.append(
+                        ValidationIssue(
+                            level="error",
+                            code=f"unpinned_toolathlon_{option}",
+                            message=f"Toolathlon {option} must equal {expected}",
+                        )
+                    )
+            attestations = {
+                "TOOLATHLON_SERVER_REVISION": TOOLATHLON_REVISION,
+                "TOOLATHLON_TASK_IMAGE_DIGEST": TOOLATHLON_TASK_IMAGE_DIGEST,
+            }
+            for variable, expected in attestations.items():
+                if os.getenv(variable) != expected:
+                    issues.append(
+                        ValidationIssue(
+                            level="error",
+                            code="invalid_toolathlon_attestation",
+                            message=(
+                                f"{variable} must attest the pinned value {expected}"
+                            ),
+                        )
+                    )
         if backend == "public-service":
             issues.append(
                 ValidationIssue(
