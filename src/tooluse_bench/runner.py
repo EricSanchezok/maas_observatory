@@ -103,6 +103,11 @@ def _execute_adapter(
                     if "transport_timeout_seconds" in selection.options
                     else None
                 ),
+                wall_timeout_seconds=(
+                    float(selection.options["transport_wall_timeout_seconds"])
+                    if "transport_wall_timeout_seconds" in selection.options
+                    else None
+                ),
                 max_retries=int(selection.options.get("transport_max_retries", 2)),
             )
         context = AdapterContext(

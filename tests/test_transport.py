@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Iterator
 from unittest.mock import patch
 
@@ -118,3 +119,31 @@ def test_transport_rejects_invalid_retry_and_timeout_configuration() -> None:
             OpenAITransport(deployment, max_retries=-1)
         with pytest.raises(ValueError, match="positive"):
             OpenAITransport(deployment, timeout_seconds=0)
+        with pytest.raises(ValueError, match="positive"):
+            OpenAITransport(deployment, wall_timeout_seconds=0)
+
+
+def test_transport_enforces_wall_clock_deadline() -> None:
+    deployment = load_catalog()[0]
+    values = {
+        deployment.endpoint.base_url_env: "https://endpoint.invalid/v1",
+        deployment.endpoint.api_key_env: "test-secret",
+    }
+
+    def slow_handler(_: httpx.Request) -> httpx.Response:
+        time.sleep(1)
+        return httpx.Response(200, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(slow_handler))
+    with (
+        patch.dict(os.environ, values, clear=False),
+        pytest.raises(TransportFailure) as captured,
+    ):
+        OpenAITransport(
+            deployment,
+            client=client,
+            max_retries=0,
+            wall_timeout_seconds=0.02,
+        ).chat_completion({})
+    assert captured.value.category is ErrorCategory.TIMEOUT
+    assert "wall-clock" in str(captured.value)

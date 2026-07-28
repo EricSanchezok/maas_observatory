@@ -70,9 +70,10 @@ uv run tooluse-bench run \
   --experiment config/experiments/protocol-smoke.yaml
 ```
 
-The smoke plan uses a 90-second inactivity timeout, no transport retry, and a
-4,096-token output cap. These settings are recorded in the experiment. The
-probe output cap also applies by default in the release plan.
+The smoke plan uses a 90-second inactivity timeout, a 120-second POSIX
+wall-clock deadline, no transport retry, and a 4,096-token output cap. These
+settings are recorded in the experiment. The probe output cap also applies by
+default in the release plan.
 
 ## Run, report, and release
 

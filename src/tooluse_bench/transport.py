@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import signal
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +17,34 @@ from tooluse_bench.domain import ModelDeployment
 from tooluse_bench.records import ErrorCategory
 
 RETRYABLE_STATUS_CODES = {429}
+
+
+class _WallClockExpired(TimeoutError):
+    """Internal exception raised by the POSIX request deadline."""
+
+
+@contextmanager
+def _wall_clock_deadline(seconds: float | None) -> Iterator[None]:
+    if seconds is None:
+        yield
+        return
+    if not hasattr(signal, "SIGALRM") or threading.current_thread() is not (
+        threading.main_thread()
+    ):
+        raise RuntimeError("wall-clock request deadlines require a POSIX main thread")
+    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+        raise RuntimeError("an existing process wall-clock timer is active")
+
+    def expire(_: int, __: object) -> None:
+        raise _WallClockExpired
+
+    previous_handler = signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 @dataclass(frozen=True)
@@ -53,6 +84,7 @@ class OpenAITransport:
         client: httpx.Client | None = None,
         max_retries: int = 2,
         timeout_seconds: float | None = None,
+        wall_timeout_seconds: float | None = None,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         if deployment.configuration_errors():
@@ -61,8 +93,11 @@ class OpenAITransport:
             raise ValueError("max_retries must be non-negative")
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        if wall_timeout_seconds is not None and wall_timeout_seconds <= 0:
+            raise ValueError("wall_timeout_seconds must be positive")
         self.deployment = deployment
         self.max_retries = max_retries
+        self.wall_timeout_seconds = wall_timeout_seconds
         self.sleeper = sleeper
         self._owns_client = client is None
         self.client = client or httpx.Client(
@@ -92,14 +127,24 @@ class OpenAITransport:
         while True:
             attempts += 1
             try:
-                response = self.client.post(
-                    url,
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
+                with _wall_clock_deadline(self.wall_timeout_seconds):
+                    response = self.client.post(
+                        url,
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+            except _WallClockExpired as exc:
+                if attempts <= self.max_retries:
+                    self._backoff(attempts)
+                    continue
+                raise TransportFailure(
+                    "request exceeded wall-clock deadline",
+                    category=ErrorCategory.TIMEOUT,
+                    attempts=attempts,
+                ) from exc
             except httpx.TimeoutException as exc:
                 if attempts <= self.max_retries:
                     self._backoff(attempts)
