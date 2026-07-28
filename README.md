@@ -18,49 +18,26 @@
 
 ## 快速开始
 
-不安装也可以直接运行：
-
 ```bash
-PYTHONPATH=src python -m tooluse_bench list
-PYTHONPATH=src python -m tooluse_bench validate
-PYTHONPATH=src python -m unittest discover -s tests
-```
+uv sync --extra dev --extra report --frozen
 
-也可以安装为本地命令：
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-
-tooluse-bench list
-tooluse-bench validate
+uv run tooluse-bench models list
+uv run tooluse-bench models validate --require-endpoints
+uv run tooluse-bench benchmarks list
+uv run pytest
 ```
 
 ## 协议探针
 
-先对一个模型运行 5 个低成本用例：
+所有评测都通过不可变 experiment plan 运行。首发计划包含协议探针、BFCL V4 和
+Toolathlon-Verified，每任务 3 次：
 
 ```bash
-PYTHONPATH=src python -m tooluse_bench probe --model glm-5.2
+uv run tooluse-bench run \
+  --experiment config/experiments/release-v1.yaml
 ```
 
-运行所有模型：
-
-```bash
-PYTHONPATH=src python -m tooluse_bench probe --all
-```
-
-只运行指定用例：
-
-```bash
-PYTHONPATH=src python -m tooluse_bench probe \
-  --model nex-n2-pro-bf16 \
-  --case exact_arguments \
-  --case parallel_calls
-```
-
-结果写入 `results/probe-<timestamp>.jsonl`，该目录不会提交到 Git。探针只接受
+私有结果写入 `runs/<run-id>/`，该目录不会提交到 Git。探针只接受
 OpenAI 标准的 `message.tool_calls`；模型把调用写成普通文本时会判失败，因为这种输出
 正是大多数 agent 框架无法接入的原因。
 
@@ -91,22 +68,15 @@ BFCL V4 不再被当作唯一主榜：这些确切上游模型的官方材料并
 MiniMax M2.7 的官方覆盖更好。Toolathlon-Verified 与 2026-06-30 前的旧版分数是
 两个不可直接比较的序列。
 
-## BFCL V4 快速子集
+## 隔离 runtime
 
-BFCL 依赖锁定在独立运行环境中，避免污染核心包：
+BFCL 与 Toolathlon 客户端依赖分别锁定，避免污染核心包：
 
 ```bash
 uv sync --project benchmark-envs/bfcl --frozen
-tooluse-bench bfcl --model glm-5.2 --limit 10
+uv sync --project benchmark-envs/toolathlon --frozen
 ```
 
-默认选择 8 个确定性较强的单轮/多轮子集。也可以重复传入 `--subset`：
-
-```bash
-tooluse-bench bfcl \
-  --model glm-5.2 \
-  --subset simple_python \
-  --subset parallel \
-  --subset irrelevance \
-  --limit 20
-```
+BFCL 的 `full-public` profile 覆盖 22 个子集；web-search 子集需要
+`SERPAPI_API_KEY`。Toolathlon 默认连接按官方固定 commit 部署的自托管评测服务，
+需要设置 `TOOLATHLON_SERVER_HOST`。

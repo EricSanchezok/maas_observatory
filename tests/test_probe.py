@@ -1,6 +1,6 @@
 import unittest
 
-from tooluse_bench.probe import (
+from tooluse_bench.benchmarks.probe import (
     _check_exact_add,
     _check_irrelevant,
     _check_missing_info,

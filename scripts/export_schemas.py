@@ -6,10 +6,14 @@ import json
 
 from tooluse_bench.config import PROJECT_ROOT
 from tooluse_bench.domain import ExperimentPlan, ModelCatalog
+from tooluse_bench.records import RunCompletion, RunManifest, TaskResult
 
 SCHEMAS = {
     "experiment.schema.json": ExperimentPlan,
     "model-catalog.schema.json": ModelCatalog,
+    "run-completion.schema.json": RunCompletion,
+    "run-manifest.schema.json": RunManifest,
+    "task-result.schema.json": TaskResult,
 }
 
 

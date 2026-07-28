@@ -1,223 +1,135 @@
+"""Public command-line interface."""
+
 from __future__ import annotations
 
-import argparse
-import json
-import os
-import sys
-from datetime import UTC, datetime
 from pathlib import Path
+from typing import Annotated
 
-from tooluse_bench.config import PROJECT_ROOT, load_catalog, load_dotenv, resolve_models
-from tooluse_bench.probe import CASES, run_case
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from tooluse_bench.config import (
+    DEFAULT_CATALOG,
+    DEFAULT_EXPERIMENT,
+    load_dotenv,
+    load_experiment,
+    load_model_catalog,
+)
+from tooluse_bench.registry import BenchmarkRegistry
+from tooluse_bench.runner import run_experiment, select_deployments
+
+app = typer.Typer(
+    name="tooluse-bench",
+    help="Reproducible tool-use evaluation for OpenAI-compatible deployments.",
+    no_args_is_help=True,
+)
+models_app = typer.Typer(help="Inspect and validate model deployments.")
+benchmarks_app = typer.Typer(help="Inspect and validate benchmark adapters.")
+app.add_typer(models_app, name="models")
+app.add_typer(benchmarks_app, name="benchmarks")
+console = Console()
 
 
-def _list_models() -> int:
-    models = load_catalog()
-    headers = ("ALIAS", "MODEL ID", "FAMILY", "INPUT")
-    rows = [
-        (
+@models_app.command("list")
+def models_list(
+    catalog: Annotated[Path, typer.Option(exists=True)] = DEFAULT_CATALOG,
+) -> None:
+    model_catalog = load_model_catalog(catalog)
+    table = Table("Alias", "Deployment ID", "Upstream model", "Precision", "Input")
+    for model in model_catalog.deployments:
+        table.add_row(
             model.alias,
-            model.model_id,
-            model.family,
+            model.deployment_id,
+            model.upstream_model,
+            model.precision.value,
             ",".join(model.input_modalities),
         )
-        for model in models
-    ]
-    widths = [
-        max(len(headers[index]), *(len(row[index]) for row in rows))
-        for index in range(len(headers))
-    ]
-    print("  ".join(value.ljust(widths[index]) for index, value in enumerate(headers)))
-    for row in rows:
-        print("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
-    return 0
+    console.print(table)
 
 
-def _validate() -> int:
+@models_app.command("validate")
+def models_validate(
+    catalog: Annotated[Path, typer.Option(exists=True)] = DEFAULT_CATALOG,
+    require_endpoints: Annotated[
+        bool,
+        typer.Option(help="Also require private endpoint URLs and API keys from .env."),
+    ] = False,
+) -> None:
     load_dotenv()
-    failed = False
-    for model in load_catalog():
-        errors = model.configuration_errors()
-        if errors:
-            failed = True
-            print(f"FAIL  {model.alias}: {'; '.join(errors)}")
-        else:
-            print(f"OK    {model.alias}: {model.model_id}")
-    return 1 if failed else 0
-
-
-def _probe(args: argparse.Namespace) -> int:
-    load_dotenv()
-    try:
-        models = resolve_models(args.model, args.all)
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-    case_by_name = {case.name: case for case in CASES}
-    selected_cases = CASES
-    if args.case:
-        unknown = sorted(set(args.case) - case_by_name.keys())
-        if unknown:
-            print(
-                f"error: unknown case(s): {', '.join(unknown)}; "
-                f"available: {', '.join(case_by_name)}",
-                file=sys.stderr,
+    model_catalog = load_model_catalog(catalog)
+    errors = 0
+    for model in model_catalog.deployments:
+        configuration_errors = model.configuration_errors() if require_endpoints else []
+        if configuration_errors:
+            errors += 1
+            console.print(
+                f"[red]FAIL[/red] {model.alias}: {'; '.join(configuration_errors)}"
             )
-            return 2
-        selected_cases = [case_by_name[name] for name in args.case]
-
-    config_errors = {
-        model.alias: model.configuration_errors()
-        for model in models
-        if model.configuration_errors()
-    }
-    if config_errors:
-        for alias, errors in config_errors.items():
-            print(f"FAIL  {alias}: {'; '.join(errors)}", file=sys.stderr)
-        return 2
-
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    output = (
-        Path(args.output)
-        if args.output
-        else PROJECT_ROOT / "results" / f"probe-{timestamp}.jsonl"
-    )
-    output.parent.mkdir(parents=True, exist_ok=True)
-
-    results: list[dict[str, object]] = []
-    with output.open("w", encoding="utf-8") as handle:
-        for model in models:
-            for case in selected_cases:
-                result = run_case(model, case, args.timeout)
-                results.append(result)
-                handle.write(json.dumps(result, ensure_ascii=False) + "\n")
-                print(
-                    f"{str(result['status']).upper():5} "
-                    f"{model.alias:24} {case.name:30} "
-                    f"{result['latency_seconds']}s"
-                )
-
-    passed = sum(result["status"] == "pass" for result in results)
-    failed = sum(result["status"] == "fail" for result in results)
-    error_count = sum(result["status"] == "error" for result in results)
-    print(f"\npass={passed} fail={failed} error={error_count} output={output}")
-    return 0 if failed == 0 and error_count == 0 else 1
-
-
-def _bfcl(args: argparse.Namespace) -> int:
-    load_dotenv()
-    try:
-        model = resolve_models([args.model], all_models=False)[0]
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-    errors = model.configuration_errors()
+        else:
+            console.print(f"[green]OK[/green]   {model.alias}")
     if errors:
-        print(f"FAIL  {model.alias}: {'; '.join(errors)}", file=sys.stderr)
-        return 2
+        raise typer.Exit(1)
 
-    try:
-        from evalscope import TaskConfig, run_task
-    except ImportError:
-        print(
-            "error: EvalScope is not installed; run: pip install -e '.[evalscope]'",
-            file=sys.stderr,
+
+@benchmarks_app.command("list")
+def benchmarks_list() -> None:
+    registry = BenchmarkRegistry.discover()
+    table = Table("ID", "Version", "Profiles", "Hermetic default")
+    for adapter in registry.all():
+        metadata = adapter.metadata
+        table.add_row(
+            metadata.benchmark_id,
+            metadata.version,
+            ", ".join(metadata.supported_profiles),
+            "yes" if metadata.hermetic_default else "no",
         )
-        return 2
-
-    output = (
-        Path(args.output)
-        if args.output
-        else PROJECT_ROOT / "results" / "bfcl" / model.alias
-    )
-    output.mkdir(parents=True, exist_ok=True)
-    extra_params: dict[str, object] = {"is_fc_model": True}
-    serpapi_key = os.getenv("SERPAPI_API_KEY")
-    if serpapi_key:
-        extra_params["SERPAPI_API_KEY"] = serpapi_key
-
-    task = TaskConfig(
-        model=model.model_id,
-        api_url=model.base_url,
-        api_key=model.api_key,
-        eval_type="openai_api",
-        datasets=["bfcl_v4"],
-        eval_batch_size=args.batch_size,
-        dataset_args={
-            "bfcl_v4": {
-                "subset_list": args.subset,
-                "extra_params": extra_params,
-            }
-        },
-        generation_config={"temperature": 0},
-        use_cache=str(output / "cache"),
-        limit=args.limit,
-    )
-    run_task(task_cfg=task)
-    return 0
+    console.print(table)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="tooluse-bench",
-        description="Probe SII Holos OpenAI-compatible tool-calling endpoints.",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("list", help="list configured model aliases")
-    subparsers.add_parser("validate", help="validate local model configuration")
+@benchmarks_app.command("validate")
+def benchmarks_validate(
+    experiment: Annotated[Path, typer.Option(exists=True)] = DEFAULT_EXPERIMENT,
+    catalog: Annotated[Path, typer.Option(exists=True)] = DEFAULT_CATALOG,
+) -> None:
+    plan = load_experiment(experiment)
+    model_catalog = load_model_catalog(catalog)
+    deployments = select_deployments(plan, model_catalog)
+    registry = BenchmarkRegistry.discover()
+    errors = 0
+    for selection in plan.benchmarks:
+        adapter = registry.get(selection.benchmark_id)
+        for deployment in deployments:
+            issues = adapter.validate(selection, deployment)
+            for issue in issues:
+                style = "red" if issue.level == "error" else "yellow"
+                console.print(
+                    f"[{style}]{issue.level.upper()}[/{style}] "
+                    f"{selection.benchmark_id}/{deployment.alias}: "
+                    f"{issue.code}: {issue.message}"
+                )
+                errors += issue.level == "error"
+    if errors:
+        raise typer.Exit(1)
+    console.print("[green]All benchmark selections are valid.[/green]")
 
-    probe = subparsers.add_parser("probe", help="run a small native tool-calling probe")
-    probe.add_argument(
-        "--model", action="append", help="model alias; repeat to select several"
-    )
-    probe.add_argument(
-        "--all", action="store_true", help="probe every configured model"
-    )
-    probe.add_argument(
-        "--case", action="append", help="case name; repeat to select several"
-    )
-    probe.add_argument("--timeout", type=float, help="per-request timeout in seconds")
-    probe.add_argument("--output", help="JSONL output path")
 
-    bfcl = subparsers.add_parser(
-        "bfcl",
-        help="run selected BFCL V4 subsets through EvalScope",
+@app.command("run")
+def run(
+    experiment: Annotated[Path, typer.Option(exists=True)] = DEFAULT_EXPERIMENT,
+    catalog: Annotated[Path, typer.Option(exists=True)] = DEFAULT_CATALOG,
+    output_root: Annotated[Path | None, typer.Option()] = None,
+) -> None:
+    """Execute an immutable experiment plan."""
+
+    load_dotenv()
+    run_directory = run_experiment(
+        experiment_path=experiment,
+        catalog_path=catalog,
+        output_root=output_root,
     )
-    bfcl.add_argument("--model", required=True, help="one configured model alias")
-    bfcl.add_argument(
-        "--subset",
-        action="append",
-        default=None,
-        help="BFCL V4 subset; repeat to select several",
-    )
-    bfcl.add_argument("--limit", type=int, default=10, help="examples per subset")
-    bfcl.add_argument("--batch-size", type=int, default=1)
-    bfcl.add_argument("--output", help="cache/output directory")
-    return parser
+    console.print(f"[green]Run completed:[/green] {run_directory}")
 
 
 def main() -> None:
-    parser = build_parser()
-    args = parser.parse_args()
-    if args.command == "list":
-        code = _list_models()
-    elif args.command == "validate":
-        code = _validate()
-    elif args.command == "probe":
-        code = _probe(args)
-    else:
-        if args.subset is None:
-            args.subset = [
-                "simple_python",
-                "multiple",
-                "parallel",
-                "parallel_multiple",
-                "irrelevance",
-                "multi_turn_base",
-                "multi_turn_miss_func",
-                "multi_turn_miss_param",
-            ]
-        code = _bfcl(args)
-    raise SystemExit(code)
+    app()

@@ -31,7 +31,7 @@ dev = [
 ]
 
 [project.scripts]
-tooluse-bench = "tooluse_bench.cli:main"
+tooluse-bench = "tooluse_bench.cli:app"
 
 [project.entry-points."tooluse_bench.benchmarks"]
 probe = "tooluse_bench.benchmarks.probe:ProbeAdapter"

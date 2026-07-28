@@ -1,0 +1,66 @@
+{
+  "$defs": {
+    "TaskStatus": {
+      "enum": [
+        "pass",
+        "fail",
+        "error",
+        "not_run"
+      ],
+      "title": "TaskStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "complete": {
+      "const": true,
+      "default": true,
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "result_count": {
+      "minimum": 0,
+      "title": "Result Count",
+      "type": "integer"
+    },
+    "results_sha256": {
+      "title": "Results Sha256",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "status_counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "propertyNames": {
+        "$ref": "#/$defs/TaskStatus"
+      },
+      "title": "Status Counts",
+      "type": "object"
+    }
+  },
+  "required": [
+    "run_id",
+    "finished_at",
+    "result_count",
+    "status_counts",
+    "results_sha256"
+  ],
+  "title": "RunCompletion",
+  "type": "object"
+}

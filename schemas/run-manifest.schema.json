@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "BenchmarkMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "benchmark_id": {
+          "title": "Benchmark Id",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "hermetic_default": {
+          "title": "Hermetic Default",
+          "type": "boolean"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "string"
+        },
+        "source_url": {
+          "title": "Source Url",
+          "type": "string"
+        },
+        "supported_profiles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Supported Profiles",
+          "type": "array"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "benchmark_id",
+        "display_name",
+        "version",
+        "source_url",
+        "revision",
+        "hermetic_default",
+        "supported_profiles"
+      ],
+      "title": "BenchmarkMetadata",
+      "type": "object"
+    },
+    "Lane": {
+      "enum": [
+        "standardized",
+        "official-reproduction"
+      ],
+      "title": "Lane",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "benchmarks": {
+      "items": {
+        "$ref": "#/$defs/BenchmarkMetadata"
+      },
+      "title": "Benchmarks",
+      "type": "array"
+    },
+    "catalog_path": {
+      "title": "Catalog Path",
+      "type": "string"
+    },
+    "configuration_sha256": {
+      "title": "Configuration Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "dependency_lock_sha256": {
+      "title": "Dependency Lock Sha256",
+      "type": "string"
+    },
+    "experiment_id": {
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "experiment_path": {
+      "title": "Experiment Path",
+      "type": "string"
+    },
+    "git_commit": {
+      "title": "Git Commit",
+      "type": "string"
+    },
+    "git_dirty": {
+      "title": "Git Dirty",
+      "type": "boolean"
+    },
+    "lanes": {
+      "items": {
+        "$ref": "#/$defs/Lane"
+      },
+      "title": "Lanes",
+      "type": "array"
+    },
+    "output_directory": {
+      "format": "path",
+      "title": "Output Directory",
+      "type": "string"
+    },
+    "package_version": {
+      "title": "Package Version",
+      "type": "string"
+    },
+    "platform": {
+      "title": "Platform",
+      "type": "string"
+    },
+    "python_version": {
+      "title": "Python Version",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "selected_deployments": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Selected Deployments",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "experiment_id",
+    "created_at",
+    "git_commit",
+    "git_dirty",
+    "package_version",
+    "python_version",
+    "platform",
+    "configuration_sha256",
+    "dependency_lock_sha256",
+    "catalog_path",
+    "experiment_path",
+    "output_directory",
+    "benchmarks",
+    "selected_deployments",
+    "lanes"
+  ],
+  "title": "RunManifest",
+  "type": "object"
+}

@@ -1,0 +1,220 @@
+{
+  "$defs": {
+    "ErrorCategory": {
+      "enum": [
+        "none",
+        "transport",
+        "protocol",
+        "selection",
+        "arguments",
+        "planning",
+        "tool_result_integration",
+        "policy",
+        "timeout",
+        "infrastructure",
+        "insufficient_protocol"
+      ],
+      "title": "ErrorCategory",
+      "type": "string"
+    },
+    "Lane": {
+      "enum": [
+        "standardized",
+        "official-reproduction"
+      ],
+      "title": "Lane",
+      "type": "string"
+    },
+    "TaskStatus": {
+      "enum": [
+        "pass",
+        "fail",
+        "error",
+        "not_run"
+      ],
+      "title": "TaskStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_paths": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Artifact Paths",
+      "type": "array"
+    },
+    "attempts": {
+      "default": 1,
+      "minimum": 0,
+      "title": "Attempts",
+      "type": "integer"
+    },
+    "benchmark_id": {
+      "title": "Benchmark Id",
+      "type": "string"
+    },
+    "benchmark_version": {
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "deployment_id": {
+      "title": "Deployment Id",
+      "type": "string"
+    },
+    "error_category": {
+      "$ref": "#/$defs/ErrorCategory",
+      "default": "none"
+    },
+    "error_detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Detail"
+    },
+    "experiment_id": {
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "lane": {
+      "$ref": "#/$defs/Lane"
+    },
+    "latency_seconds": {
+      "minimum": 0,
+      "title": "Latency Seconds",
+      "type": "number"
+    },
+    "metrics": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Metrics",
+      "type": "object"
+    },
+    "model_alias": {
+      "title": "Model Alias",
+      "type": "string"
+    },
+    "profile": {
+      "title": "Profile",
+      "type": "string"
+    },
+    "request": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Request"
+    },
+    "response": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Response"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "score": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Score"
+    },
+    "seed": {
+      "minimum": 0,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/TaskStatus"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    },
+    "trial": {
+      "minimum": 1,
+      "title": "Trial",
+      "type": "integer"
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Usage"
+    }
+  },
+  "required": [
+    "run_id",
+    "experiment_id",
+    "benchmark_id",
+    "benchmark_version",
+    "profile",
+    "lane",
+    "deployment_id",
+    "model_alias",
+    "task_id",
+    "trial",
+    "seed",
+    "status",
+    "latency_seconds",
+    "started_at",
+    "finished_at"
+  ],
+  "title": "TaskResult",
+  "type": "object"
+}
