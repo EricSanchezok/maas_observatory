@@ -183,3 +183,61 @@ def test_transport_wall_worker_returns_response_and_transport_error() -> None:
         ).chat_completion({})
     assert captured.value.category is ErrorCategory.TRANSPORT
     assert "TransportError" in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("error_type", "category"),
+    [
+        (httpx.ReadTimeout, ErrorCategory.TIMEOUT),
+        (httpx.ConnectError, ErrorCategory.TRANSPORT),
+    ],
+)
+def test_transport_classifies_terminal_client_exceptions(
+    error_type: type[httpx.TransportError],
+    category: ErrorCategory,
+) -> None:
+    deployment = load_catalog()[0]
+    values = {
+        deployment.endpoint.base_url_env: "https://endpoint.invalid/v1",
+        deployment.endpoint.api_key_env: "test-secret",
+    }
+
+    def failed_handler(request: httpx.Request) -> httpx.Response:
+        raise error_type("synthetic", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(failed_handler))
+    with (
+        patch.dict(os.environ, values, clear=False),
+        pytest.raises(TransportFailure) as captured,
+    ):
+        OpenAITransport(
+            deployment,
+            client=client,
+            max_retries=0,
+        ).chat_completion({})
+    assert captured.value.category is category
+    assert captured.value.attempts == 1
+
+
+def test_transport_rejects_non_object_json_and_closes_owned_client() -> None:
+    deployment = load_catalog()[0]
+    values = {
+        deployment.endpoint.base_url_env: "https://endpoint.invalid/v1",
+        deployment.endpoint.api_key_env: "test-secret",
+    }
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=[]))
+    )
+    with (
+        patch.dict(os.environ, values, clear=False),
+        pytest.raises(TransportFailure, match="must be an object"),
+    ):
+        OpenAITransport(deployment, client=client).chat_completion({})
+
+    with (
+        patch.dict(os.environ, values, clear=False),
+        patch("tooluse_bench.transport.httpx.Client") as client_type,
+        OpenAITransport(deployment),
+    ):
+        pass
+    client_type.return_value.close.assert_called_once_with()

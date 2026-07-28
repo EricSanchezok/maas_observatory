@@ -23,13 +23,19 @@ class _WallClockExpired(TimeoutError):
 
 def _post_worker(
     sender: Any,
-    client: httpx.Client,
+    client: httpx.Client | None,
+    timeout_seconds: float,
     url: str,
     payload: dict[str, Any],
     headers: dict[str, str],
 ) -> None:
+    owns_client = client is None
+    worker_client = client or httpx.Client(
+        timeout=timeout_seconds,
+        trust_env=False,
+    )
     try:
-        response = client.post(url, json=payload, headers=headers)
+        response = worker_client.post(url, json=payload, headers=headers)
         sender.send(
             (
                 "response",
@@ -45,11 +51,16 @@ def _post_worker(
     except BaseException as exc:
         sender.send(("unexpected", type(exc).__name__))
     finally:
-        sender.close()
+        try:
+            if owns_client:
+                worker_client.close()
+        finally:
+            sender.close()
 
 
 def _post_with_deadline(
-    client: httpx.Client,
+    client: httpx.Client | None,
+    timeout_seconds: float,
     url: str,
     payload: dict[str, Any],
     headers: dict[str, str],
@@ -64,7 +75,7 @@ def _post_with_deadline(
     receiver, sender = process_context.Pipe(duplex=False)
     worker = process_context.Process(
         target=_post_worker,
-        args=(sender, client, url, payload, headers),
+        args=(sender, client, timeout_seconds, url, payload, headers),
         daemon=True,
     )
     worker.start()
@@ -156,8 +167,9 @@ class OpenAITransport:
         self.wall_timeout_seconds = wall_timeout_seconds
         self.sleeper = sleeper
         self._owns_client = client is None
+        self.timeout_seconds = timeout_seconds or deployment.timeout_seconds or 600
         self.client = client or httpx.Client(
-            timeout=timeout_seconds or deployment.timeout_seconds or 600,
+            timeout=self.timeout_seconds,
             trust_env=False,
         )
 
@@ -195,7 +207,8 @@ class OpenAITransport:
                     )
                 else:
                     response = _post_with_deadline(
-                        self.client,
+                        None if self._owns_client else self.client,
+                        self.timeout_seconds,
                         url,
                         payload,
                         headers,
