@@ -73,7 +73,7 @@ uv run tooluse-bench run \
 The smoke plan uses a 90-second inactivity timeout, a 30-second POSIX
 wall-clock deadline, no transport retry, and a 4,096-token output cap. These
 settings are recorded in the experiment. The probe output cap also applies by
-default in the release plan.
+default in the release plan. The hard deadline requires POSIX `fork` support.
 
 ## Run, report, and release
 

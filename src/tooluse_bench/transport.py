@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import json
-import signal
-import threading
+import multiprocessing
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,31 +18,89 @@ RETRYABLE_STATUS_CODES = {429}
 
 
 class _WallClockExpired(TimeoutError):
-    """Internal exception raised by the POSIX request deadline."""
+    """Internal exception raised when a request worker exceeds its deadline."""
 
 
-@contextmanager
-def _wall_clock_deadline(seconds: float | None) -> Iterator[None]:
-    if seconds is None:
-        yield
-        return
-    if not hasattr(signal, "SIGALRM") or threading.current_thread() is not (
-        threading.main_thread()
-    ):
-        raise RuntimeError("wall-clock request deadlines require a POSIX main thread")
-    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
-        raise RuntimeError("an existing process wall-clock timer is active")
-
-    def expire(_: int, __: object) -> None:
-        raise _WallClockExpired
-
-    previous_handler = signal.signal(signal.SIGALRM, expire)
-    signal.setitimer(signal.ITIMER_REAL, seconds)
+def _post_worker(
+    sender: Any,
+    client: httpx.Client,
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+) -> None:
     try:
-        yield
+        response = client.post(url, json=payload, headers=headers)
+        sender.send(
+            (
+                "response",
+                response.status_code,
+                list(response.headers.multi_items()),
+                response.content,
+            )
+        )
+    except httpx.TimeoutException as exc:
+        sender.send(("timeout", type(exc).__name__))
+    except httpx.TransportError as exc:
+        sender.send(("transport", type(exc).__name__))
+    except BaseException as exc:
+        sender.send(("unexpected", type(exc).__name__))
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous_handler)
+        sender.close()
+
+
+def _post_with_deadline(
+    client: httpx.Client,
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    seconds: float,
+) -> httpx.Response:
+    try:
+        process_context = multiprocessing.get_context("fork")
+    except ValueError as exc:
+        raise RuntimeError(
+            "wall-clock request deadlines require POSIX fork support"
+        ) from exc
+    receiver, sender = process_context.Pipe(duplex=False)
+    worker = process_context.Process(
+        target=_post_worker,
+        args=(sender, client, url, payload, headers),
+        daemon=True,
+    )
+    worker.start()
+    sender.close()
+    try:
+        if not receiver.poll(seconds):
+            worker.terminate()
+            worker.join(timeout=5)
+            if worker.is_alive():
+                worker.kill()
+                worker.join()
+            raise _WallClockExpired
+        try:
+            outcome = receiver.recv()
+        except EOFError as exc:
+            raise RuntimeError("request worker exited without an outcome") from exc
+    finally:
+        receiver.close()
+    worker.join(timeout=5)
+    if worker.is_alive():
+        worker.kill()
+        worker.join()
+        raise RuntimeError("request worker did not exit after returning an outcome")
+
+    kind = outcome[0]
+    if kind == "response":
+        return httpx.Response(
+            status_code=int(outcome[1]),
+            headers=outcome[2],
+            content=outcome[3],
+        )
+    if kind == "timeout":
+        raise httpx.ReadTimeout(f"request worker: {outcome[1]}")
+    if kind == "transport":
+        raise httpx.TransportError(f"request worker: {outcome[1]}")
+    raise RuntimeError(f"request worker failed: {outcome[1]}")
 
 
 @dataclass(frozen=True)
@@ -127,14 +183,23 @@ class OpenAITransport:
         while True:
             attempts += 1
             try:
-                with _wall_clock_deadline(self.wall_timeout_seconds):
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                }
+                if self.wall_timeout_seconds is None:
                     response = self.client.post(
                         url,
                         json=payload,
-                        headers={
-                            "Authorization": f"Bearer {api_key}",
-                            "Content-Type": "application/json",
-                        },
+                        headers=headers,
+                    )
+                else:
+                    response = _post_with_deadline(
+                        self.client,
+                        url,
+                        payload,
+                        headers,
+                        self.wall_timeout_seconds,
                     )
             except _WallClockExpired as exc:
                 if attempts <= self.max_retries:

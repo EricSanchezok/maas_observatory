@@ -147,3 +147,39 @@ def test_transport_enforces_wall_clock_deadline() -> None:
         ).chat_completion({})
     assert captured.value.category is ErrorCategory.TIMEOUT
     assert "wall-clock" in str(captured.value)
+
+
+def test_transport_wall_worker_returns_response_and_transport_error() -> None:
+    deployment = load_catalog()[0]
+    values = {
+        deployment.endpoint.base_url_env: "https://endpoint.invalid/v1",
+        deployment.endpoint.api_key_env: "test-secret",
+    }
+
+    success_client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"ok": True}))
+    )
+    with patch.dict(os.environ, values, clear=False):
+        response = OpenAITransport(
+            deployment,
+            client=success_client,
+            wall_timeout_seconds=2,
+        ).chat_completion({})
+    assert response.payload == {"ok": True}
+
+    def failed_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("synthetic", request=request)
+
+    failed_client = httpx.Client(transport=httpx.MockTransport(failed_handler))
+    with (
+        patch.dict(os.environ, values, clear=False),
+        pytest.raises(TransportFailure) as captured,
+    ):
+        OpenAITransport(
+            deployment,
+            client=failed_client,
+            max_retries=0,
+            wall_timeout_seconds=2,
+        ).chat_completion({})
+    assert captured.value.category is ErrorCategory.TRANSPORT
+    assert "TransportError" in str(captured.value)
