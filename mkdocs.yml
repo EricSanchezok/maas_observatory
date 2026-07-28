@@ -8,6 +8,7 @@ theme:
 nav:
   - Home: index.md
   - Methodology: methodology.md
+  - Service observability: service-observability.md
   - Reproducibility: reproducibility.md
   - Results: results.md
   - Baselines: official-baseline-matrix.md

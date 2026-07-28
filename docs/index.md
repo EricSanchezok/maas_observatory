@@ -14,4 +14,7 @@ statistics, public baseline provenance, and a sanitized release pipeline. It
 does not publish private endpoint URLs or credentials.
 
 Start with the [methodology](methodology.md), then follow the
-[reproducibility guide](reproducibility.md).
+[reproducibility guide](reproducibility.md). The
+[service observability research](service-observability.md) defines the
+low-impact monitoring, latency, throughput, and capacity-measurement model for
+the configured deployments.
