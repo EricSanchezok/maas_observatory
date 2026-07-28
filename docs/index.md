@@ -1,13 +1,13 @@
 # SII Holos Tool-use Bench
 
-This project measures whether SII Holos model deployments can reliably use
-tools through the OpenAI-compatible protocol and inside longer agent loops.
+This project evaluates SII Holos model deployments through the
+OpenAI-compatible tool-calling protocol and longer agent workflows.
 
-The evaluation keeps three questions separate:
+The evaluation reports three dimensions separately:
 
-1. Did the endpoint and serving stack return a valid protocol response?
-2. Did the model select and call the correct tools?
-3. Did the full agent complete the task reliably?
+1. endpoint and serving-stack protocol conformance;
+2. tool selection and function-call correctness;
+3. end-to-end agent task completion and reliability.
 
 The repository contains configuration, immutable run records, deterministic
 statistics, public baseline provenance, and a sanitized release pipeline. It

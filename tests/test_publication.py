@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from tests.publication_fixture import create_populated_public_results
 from tooluse_bench.config import PROJECT_ROOT
 from tooluse_bench.publication import (
     PublicResultIndex,
@@ -17,12 +18,21 @@ from tooluse_bench.publication import (
 )
 from tooluse_bench.store import sha256_file
 
-SOURCE_ROOT = PROJECT_ROOT / "public-results"
+COMMITTED_ROOT = PROJECT_ROOT / "public-results"
+GENERATED_SOURCE_ROOT: Path | None = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def generated_public_results(tmp_path_factory: pytest.TempPathFactory) -> None:
+    global GENERATED_SOURCE_ROOT
+    GENERATED_SOURCE_ROOT = tmp_path_factory.mktemp("publication") / "public-results"
+    create_populated_public_results(GENERATED_SOURCE_ROOT)
 
 
 def copy_public_results(tmp_path: Path) -> Path:
+    assert GENERATED_SOURCE_ROOT is not None
     destination = tmp_path / "public-results"
-    shutil.copytree(SOURCE_ROOT, destination)
+    shutil.copytree(GENERATED_SOURCE_ROOT, destination)
     return destination
 
 
@@ -65,7 +75,8 @@ def mutate_json(directory: Path, filename: str, mutate: object) -> None:
 def test_committed_public_results_are_valid_and_rendered() -> None:
     index, snapshots = validate_public_results()
 
-    assert index.latest_run_id in snapshots
+    assert index.latest_run_id is None
+    assert snapshots == {}
     assert render_public_results_markdown() == (
         PROJECT_ROOT / "docs" / "results.md"
     ).read_text(encoding="utf-8")
@@ -89,6 +100,9 @@ def test_public_models_reject_invalid_release_and_index_metadata() -> None:
         "title": "title",
         "status": "candidate",
     }
+    assert PublicResultIndex().snapshots == []
+    with pytest.raises(ValidationError, match="empty public index"):
+        PublicResultIndex(latest_run_id="run")
     with pytest.raises(ValidationError, match="run IDs"):
         PublicResultIndex(
             latest_run_id="run",
@@ -150,6 +164,7 @@ def test_metric_tampering_is_rejected(tmp_path: Path) -> None:
     directory = snapshot_directory(root)
     metrics_path = directory / "metrics.json"
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    original_metric = metrics[0].copy()
     metrics[0]["deployment_id"] = "unknown"
     write_json(metrics_path, metrics)
     refresh_checksums(directory)
@@ -157,7 +172,7 @@ def test_metric_tampering_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="faithful release-metric projection"):
         validate_public_results(root)
 
-    metrics[0] = metrics[1]
+    metrics = [original_metric, original_metric]
     write_json(metrics_path, metrics)
     refresh_checksums(directory)
     with pytest.raises(ValueError, match="duplicate metric"):
@@ -199,7 +214,7 @@ def test_malformed_and_incomplete_release_checksums_are_rejected(
         validate_public_results(root)
 
     source_lines = (
-        (SOURCE_ROOT / directory.name / "release-checksums.sha256")
+        (GENERATED_SOURCE_ROOT / directory.name / "release-checksums.sha256")
         .read_text(encoding="utf-8")
         .splitlines()
     )
@@ -210,8 +225,9 @@ def test_malformed_and_incomplete_release_checksums_are_rejected(
 
 
 def test_symlinked_public_results_root_is_rejected(tmp_path: Path) -> None:
+    assert GENERATED_SOURCE_ROOT is not None
     linked_root = tmp_path / "linked-results"
-    linked_root.symlink_to(SOURCE_ROOT, target_is_directory=True)
+    linked_root.symlink_to(GENERATED_SOURCE_ROOT, target_is_directory=True)
 
     with pytest.raises(ValueError, match="not a real directory"):
         validate_public_results(linked_root)

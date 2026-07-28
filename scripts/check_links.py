@@ -21,7 +21,11 @@ def tracked_markdown_files(root: Path = PROJECT_ROOT) -> list[Path]:
         capture_output=True,
         text=True,
     )
-    return [root / path for path in process.stdout.rstrip("\0").split("\0") if path]
+    return [
+        root / path
+        for path in process.stdout.rstrip("\0").split("\0")
+        if path and (root / path).is_file()
+    ]
 
 
 def normalize_target(raw_target: str) -> str:

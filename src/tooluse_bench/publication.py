@@ -80,8 +80,8 @@ class PublicSnapshotReference(StrictModel):
 
 class PublicResultIndex(StrictModel):
     schema_version: Literal[1] = 1
-    latest_run_id: str
-    snapshots: list[PublicSnapshotReference] = Field(min_length=1)
+    latest_run_id: str | None = None
+    snapshots: list[PublicSnapshotReference] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_references(self) -> PublicResultIndex:
@@ -91,7 +91,9 @@ class PublicResultIndex(StrictModel):
             raise ValueError("public snapshot run IDs must be unique")
         if len(paths) != len(set(paths)):
             raise ValueError("public snapshot paths must be unique")
-        if self.latest_run_id not in run_ids:
+        if not self.snapshots and self.latest_run_id is not None:
+            raise ValueError("an empty public index cannot define latest_run_id")
+        if self.snapshots and self.latest_run_id not in run_ids:
             raise ValueError("latest_run_id must reference a public snapshot")
         return self
 
@@ -397,6 +399,18 @@ def validate_public_snapshot(
         raise ValueError("public snapshot Git commits do not match")
     if set(release.files) != release_files:
         raise ValueError("public snapshot release file inventory does not match")
+    metric_keys = [
+        (
+            item.benchmark_id,
+            item.benchmark_version,
+            item.profile,
+            item.lane,
+            item.deployment_id,
+        )
+        for item in metrics
+    ]
+    if len(metric_keys) != len(set(metric_keys)):
+        raise ValueError("public snapshot contains duplicate metric groups")
     if release.schema_version >= 3:
         figure_metadata = FigureMetadata.model_validate(
             _load_json(directory / "figure-metadata.json")
@@ -425,18 +439,6 @@ def validate_public_snapshot(
     selected = set(manifest.selected_deployments)
     if any(item.deployment_id not in selected for item in metrics):
         raise ValueError("public snapshot metric references an unknown deployment")
-    metric_keys = [
-        (
-            item.benchmark_id,
-            item.benchmark_version,
-            item.profile,
-            item.lane,
-            item.deployment_id,
-        )
-        for item in metrics
-    ]
-    if len(metric_keys) != len(set(metric_keys)):
-        raise ValueError("public snapshot contains duplicate metric groups")
     return snapshot, metrics
 
 
@@ -482,6 +484,13 @@ def validate_public_results(
 def render_public_results_markdown(root: Path = PUBLIC_RESULTS_ROOT) -> str:
     index, snapshots = validate_public_results(root)
     sections = ["# Results", ""]
+    if not index.snapshots:
+        sections.extend(
+            (
+                "No validated public result snapshot has been published.",
+                "",
+            )
+        )
     for reference in index.snapshots:
         snapshot, _ = snapshots[reference.run_id]
         sections.extend(

@@ -2,16 +2,15 @@
 
 ## Research questions
 
-The primary question is whether each evaluated deployment can be integrated
-into a standards-based agent. Secondary questions identify where failures
-occur and whether internal deployment results differ from a genuinely
-comparable upstream control.
+The evaluation characterizes protocol conformance, function-calling task
+success, request reliability, and end-to-end agent task completion for each
+configured deployment. A separate comparison layer records differences from
+upstream references when the evaluation configurations are comparable.
 
 ## Evaluation lanes
 
 The `standardized` lane applies the same task, tool schema, retry policy, and
-reporting semantics to every selected deployment. It supports fair comparisons
-within the SII Holos deployment set.
+reporting semantics to every selected deployment.
 
 The `official-reproduction` lane is used only when the adapter implements the
 benchmark's pinned official harness. A lane name alone does not make an
@@ -33,9 +32,9 @@ maximum output allowance.
 BFCL provides task-level function-calling diagnostics across simple, parallel,
 multi-turn, irrelevance, long-context, web-search, and memory subsets. The
 adapter delegates evaluation to an isolated pinned runtime. Subset scores are
-preserved; BFCL is not treated as proof of long-horizon agent success. The
-runtime executes and fsyncs one subset at a time, so an unavailable external
-service or one subset-level verifier failure cannot erase completed subsets.
+reported independently from long-horizon agent results. The runtime executes
+and fsyncs one subset at a time so completed subsets remain available if a
+later subset or external service returns an error.
 
 ### Toolathlon-Verified
 
@@ -82,9 +81,8 @@ and not-run observations remain in the trajectory file.
 For the formal BFCL plan, SDK retries are disabled and requests have a
 90-second timeout. A predeclared endpoint-health circuit opens when a completed
 subset contains at least 50 samples and at least 95% are transport or timeout
-errors. Remaining subsets are marked unscored infrastructure skips. The rule
-never opens on model-scored failures, so it cannot improve a model's capability
-score by hiding incorrect tool calls.
+errors. Remaining subsets are marked unscored infrastructure skips.
+Model-scored failures do not contribute to the circuit-breaker condition.
 
 ## Error taxonomy
 

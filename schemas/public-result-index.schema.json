@@ -41,8 +41,16 @@
   "additionalProperties": false,
   "properties": {
     "latest_run_id": {
-      "title": "Latest Run Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Latest Run Id"
     },
     "schema_version": {
       "const": 1,
@@ -54,15 +62,10 @@
       "items": {
         "$ref": "#/$defs/PublicSnapshotReference"
       },
-      "minItems": 1,
       "title": "Snapshots",
       "type": "array"
     }
   },
-  "required": [
-    "latest_run_id",
-    "snapshots"
-  ],
   "title": "PublicResultIndex",
   "type": "object"
 }

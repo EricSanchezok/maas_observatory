@@ -16,14 +16,14 @@ from function-calling accuracy and end-to-end agent performance.
 [Reproducibility](docs/reproducibility.md) ·
 [Benchmark research](docs/benchmark-research.md)
 
-## Why this repository exists
+## Scope
 
-An HTTP 200 response does not mean a deployment can be used by an agent. A
-serving stack may emit a tool call as plain text, invalid JSON, or a
-provider-specific format that standard clients cannot consume. This project
-records those failures instead of silently retrying or dropping them.
+The harness measures protocol conformance, function-calling task success,
+request reliability, and long-horizon agent task completion. Transport,
+protocol, model-scored, and external-infrastructure observations are retained
+as separate result categories.
 
-The initial evaluation has three layers:
+The initial evaluation contains three layers:
 
 1. `probe`: five inexpensive OpenAI tool-calling protocol checks;
 2. `bfcl-v4`: standardized function-calling diagnostics through a pinned

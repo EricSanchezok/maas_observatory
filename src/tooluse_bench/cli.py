@@ -223,9 +223,9 @@ def publication_validate(
     root: Annotated[Path, typer.Option()] = PUBLIC_RESULTS_ROOT,
 ) -> None:
     index, snapshots = validate_public_results(root)
+    latest = index.latest_run_id or "none"
     console.print(
-        f"[green]Validated {len(snapshots)} snapshot(s); "
-        f"latest={index.latest_run_id}.[/green]"
+        f"[green]Validated {len(snapshots)} snapshot(s); latest={latest}.[/green]"
     )
 
 

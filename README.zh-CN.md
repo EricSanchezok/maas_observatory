@@ -1,7 +1,6 @@
 # SII Holos Tool-use Bench
 
-这是一个面向 SII Holos 学院自部署模型的可复现工具调用评测框架。项目的核心目的
-不是只给模型排一个总榜，而是区分：
+这是一个面向 SII Holos 自部署模型的可复现工具调用评测框架。框架分别记录：
 
 - endpoint、鉴权或超时等传输问题；
 - OpenAI `message.tool_calls` 协议不兼容；
@@ -11,7 +10,7 @@
 首版包含 5 项轻量协议探针、BFCL V4 和 Toolathlon-Verified。协议探针与长链任务
 每个任务重复 3 次；用于官方口径对照的 BFCL 主结果执行一次完整评测，重复性另行
 测量。报告按适用范围给出 Pass@1、Pass@3、Pass^3、置信区间、错误分类、延迟与
-调用效率；不同 benchmark 的分数不会合并成一个缺乏解释性的总分。
+调用效率。不同 benchmark 的分数保持独立。
 
 ## 快速开始
 
@@ -30,7 +29,7 @@ uv run tooluse-bench run --experiment config/experiments/release-v1.yaml
 
 BFCL 全量 web-search 子集需要 `SERPAPI_API_KEY`。自托管 Toolathlon 服务还需按
 `benchmark-envs/toolathlon/README.md` 固定上游提交与任务镜像 digest，并在环境
-变量中声明这两项部署证明。
+变量中声明这两个固定值。
 
 私有运行记录写入 `runs/`。报告和公开发布包必须显式生成：
 

@@ -11,9 +11,8 @@ from tooluse_bench.publication import (
 
 def main() -> None:
     index, snapshots = validate_public_results()
-    print(
-        f"Validated {len(snapshots)} public snapshot(s); latest={index.latest_run_id}."
-    )
+    latest = index.latest_run_id or "none"
+    print(f"Validated {len(snapshots)} public snapshot(s); latest={latest}.")
     expected = render_public_results_markdown()
     results_page = PROJECT_ROOT / "docs" / "results.md"
     if results_page.read_text(encoding="utf-8") != expected:

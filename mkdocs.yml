@@ -9,7 +9,6 @@ nav:
   - Home: index.md
   - Methodology: methodology.md
   - Reproducibility: reproducibility.md
-  - Capacity validation: capacity-validation.md
   - Results: results.md
   - Baselines: official-baseline-matrix.md
   - Benchmark research: benchmark-research.md

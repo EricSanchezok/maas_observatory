@@ -470,7 +470,7 @@ def test_public_snapshot_builder_derives_from_validated_release(
         validate_release_archive(release_directory, invalid_archive)
 
 
-def test_public_snapshot_can_preserve_existing_latest_result(tmp_path: Path) -> None:
+def test_public_snapshot_can_initialize_an_empty_index(tmp_path: Path) -> None:
     run_directory = tmp_path / "private" / RUN_ID
     create_completed_run(run_directory)
     build_report(run_directory, baselines=baseline_registry())
@@ -481,6 +481,7 @@ def test_public_snapshot_can_preserve_existing_latest_result(tmp_path: Path) -> 
     public_root = tmp_path / "public-results"
     shutil.copytree(PROJECT_ROOT / "public-results", public_root)
     previous_index, _ = validate_public_results(public_root)
+    assert previous_index.latest_run_id is None
 
     build_public_snapshot(
         release_directory,
@@ -494,7 +495,7 @@ def test_public_snapshot_can_preserve_existing_latest_result(tmp_path: Path) -> 
     )
 
     index, snapshots = validate_public_results(public_root)
-    assert index.latest_run_id == previous_index.latest_run_id
+    assert index.latest_run_id == RUN_ID
     assert snapshots[RUN_ID][0].release_url is not None
 
 
