@@ -39,7 +39,7 @@ counts, and result-file hash.
 
 Native-transport experiments may set `transport_timeout_seconds`,
 `transport_wall_timeout_seconds`, and `transport_max_retries` in benchmark
-options. The protocol smoke uses a 90-second inactivity timeout, a 120-second
+options. The protocol smoke uses a 90-second inactivity timeout, a 30-second
 POSIX wall-clock deadline, and no retry so an unavailable endpoint cannot stall
 the diagnostic gate; the release plan retains the transport defaults.
 

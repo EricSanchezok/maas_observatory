@@ -12,6 +12,6 @@ benchmarks:
     trials: 3
     options:
       transport_timeout_seconds: 90
-      transport_wall_timeout_seconds: 120
+      transport_wall_timeout_seconds: 30
       transport_max_retries: 0
       max_tokens: 4096
