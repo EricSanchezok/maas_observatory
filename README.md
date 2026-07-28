@@ -1,82 +1,118 @@
 # SII Holos Tool-use Bench
 
-学院自部署 OpenAI-compatible 模型的 tool-calling 配置、协议探针和 benchmark
-调研。
+[![License: Apache-2.0](https://img.shields.io/badge/code-Apache--2.0-blue.svg)](LICENSE)
+[![Data: CC BY 4.0](https://img.shields.io/badge/data-CC%20BY%204.0-lightgrey.svg)](LICENSE-DATA)
 
-## 已配置模型
+A reproducible evaluation harness for tool use on OpenAI-compatible model
+deployments operated by SII Holos. It separates transport and protocol failures
+from function-calling accuracy and end-to-end agent performance.
 
-- DeepSeek V4 Pro / Flash
-- GLM 5.2
-- Qwen 3.6 27B
-- Kimi K2.6
-- MiniMax M2.7
-- MiMo V2.5 Pro
-- Nex N2 Pro W8A8 / BF16
+> Project status: the harness and release pipeline are under active validation.
+> No public model score is claimed until a signed-off release bundle is linked
+> from the results page.
 
-公开模型元数据位于 [`config/models.yaml`](config/models.yaml)。endpoint 和 API key
-从 `.env` 读取；`.env` 已被 Git 忽略，模板见 [`.env.example`](.env.example)。
+[中文说明](README.zh-CN.md) ·
+[Methodology](docs/methodology.md) ·
+[Reproducibility](docs/reproducibility.md) ·
+[Benchmark research](docs/benchmark-research.md)
 
-## 快速开始
+## Why this repository exists
+
+An HTTP 200 response does not mean a deployment can be used by an agent. A
+serving stack may emit a tool call as plain text, invalid JSON, or a
+provider-specific format that standard clients cannot consume. This project
+records those failures instead of silently retrying or dropping them.
+
+The initial evaluation has three layers:
+
+1. `probe`: five inexpensive OpenAI tool-calling protocol checks;
+2. `bfcl-v4`: standardized function-calling diagnostics through a pinned
+   EvalScope/BFCL runtime;
+3. `toolathlon-verified`: long-horizon agent tasks through the official pinned
+   client and a self-hosted evaluation service.
+
+Every selected task is run three times in the release plan. Results report
+Pass@1, Pass@3, Pass^3, uncertainty, error categories, latency, and efficiency.
+No cross-benchmark composite score is calculated.
+
+## Evaluated deployments
+
+The public catalog contains deployment metadata for DeepSeek V4 Pro/Flash,
+GLM 5.2, Qwen3.6-27B, Kimi K2.6, MiniMax M2.7, MiMo V2.5 Pro, and Nex N2 Pro
+W8A8/BF16. Private URLs and keys exist only in environment variables.
 
 ```bash
-uv sync --extra dev --extra report --frozen
+cp .env.example .env
+# Fill .env locally. It is ignored by Git.
 
+uv sync --extra dev --extra docs --frozen
 uv run tooluse-bench models list
 uv run tooluse-bench models validate --require-endpoints
 uv run tooluse-bench benchmarks list
-uv run pytest
+uv run tooluse-bench benchmarks validate
 ```
 
-## 协议探针
-
-所有评测都通过不可变 experiment plan 运行。首发计划包含协议探针、BFCL V4 和
-Toolathlon-Verified，每任务 3 次：
-
-```bash
-uv run tooluse-bench run \
-  --experiment config/experiments/release-v1.yaml
-```
-
-私有结果写入 `runs/<run-id>/`，该目录不会提交到 Git。探针只接受
-OpenAI 标准的 `message.tool_calls`；模型把调用写成普通文本时会判失败，因为这种输出
-正是大多数 agent 框架无法接入的原因。
-
-用例覆盖：
-
-- 精确函数名和参数；
-- 无关请求不调用工具；
-- 多工具选择；
-- 并行调用；
-- 缺少必填信息时先询问，而不是编造参数。
-
-## Benchmark 方案
-
-完整调研、取舍和分阶段实验设计见
-[`docs/benchmark-research.md`](docs/benchmark-research.md)，逐模型的官方分数与
-可比性限制见
-[`docs/official-baseline-matrix.md`](docs/official-baseline-matrix.md)。
-
-当前建议：
-
-1. protocol probe 与 BFCL V4 小样本，定位协议/parser 问题；
-2. Toolathlon-Verified 统一横评九个学院 endpoint；
-3. 按模型复现其官方真正发布过的 benchmark，计算 official delta；
-4. 再用 ACEBench、τ³-bench、Claw-Eval 或 MCP benchmark 扩充证据。
-
-BFCL V4 不再被当作唯一主榜：这些确切上游模型的官方材料并没有提供 BFCL V4
-分数，而 Toolathlon 对 GLM 5.2、DeepSeek V4、Nex N2 Pro、Kimi K2.6 和
-MiniMax M2.7 的官方覆盖更好。Toolathlon-Verified 与 2026-06-30 前的旧版分数是
-两个不可直接比较的序列。
-
-## 隔离 runtime
-
-BFCL 与 Toolathlon 客户端依赖分别锁定，避免污染核心包：
+The benchmark runtimes are isolated and independently locked:
 
 ```bash
 uv sync --project benchmark-envs/bfcl --frozen
 uv sync --project benchmark-envs/toolathlon --frozen
 ```
 
-BFCL 的 `full-public` profile 覆盖 22 个子集；web-search 子集需要
-`SERPAPI_API_KEY`。Toolathlon 默认连接按官方固定 commit 部署的自托管评测服务，
-需要设置 `TOOLATHLON_SERVER_HOST`。
+BFCL web-search subsets require `SERPAPI_API_KEY`. The hermetic Toolathlon
+profile requires `TOOLATHLON_SERVER_HOST` pointing at a server deployed from
+the pinned revision documented by the adapter.
+
+Run the inexpensive three-trial protocol gate before the complete release plan:
+
+```bash
+uv run tooluse-bench run \
+  --experiment config/experiments/protocol-smoke.yaml
+```
+
+## Run, report, and release
+
+```bash
+uv run tooluse-bench run \
+  --experiment config/experiments/release-v1.yaml
+
+uv run tooluse-bench report build <run-id>
+uv run tooluse-bench release build <run-id>
+uv run tooluse-bench release validate <run-id>
+```
+
+Private runs are append-only under `runs/` and never tracked. A release bundle
+contains sanitized trajectories, a manifest, completion record, aggregate
+metrics, report, data license, and SHA-256 checksums. The deterministic archive
+can be attached to an immutable GitHub Release.
+
+## Official comparisons
+
+`config/baselines.yaml` is the machine-readable source registry. Published
+vendor and benchmark scores are marked `contextual` by default. The report only
+computes an official delta when all of the following are explicitly aligned:
+
+- benchmark release and metric;
+- task split, verifier, and agent harness;
+- precision and serving configuration;
+- reasoning and sampling settings;
+- compatible deployment identity.
+
+This prevents, for example, comparing Toolathlon-Verified with legacy
+Toolathlon, MCPMark with MCP-Atlas, or a quantized internal deployment with an
+upstream score as if they were the same experiment.
+
+## Development
+
+```bash
+uv run ruff format --check src tests scripts
+uv run ruff check src tests scripts
+uv run mypy src
+uv run pytest --cov=tooluse_bench --cov-report=term-missing
+uv run python scripts/check_schemas.py
+uv build
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before adding a model or benchmark.
+Code is licensed under Apache-2.0. Published reports and result data are
+licensed under CC BY 4.0.

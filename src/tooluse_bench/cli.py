@@ -17,6 +17,8 @@ from tooluse_bench.config import (
     load_model_catalog,
 )
 from tooluse_bench.registry import BenchmarkRegistry
+from tooluse_bench.release import build_release, validate_release
+from tooluse_bench.reporting import build_report
 from tooluse_bench.runner import run_experiment, select_deployments
 
 app = typer.Typer(
@@ -26,8 +28,12 @@ app = typer.Typer(
 )
 models_app = typer.Typer(help="Inspect and validate model deployments.")
 benchmarks_app = typer.Typer(help="Inspect and validate benchmark adapters.")
+report_app = typer.Typer(help="Build deterministic reports from private runs.")
+release_app = typer.Typer(help="Build and validate sanitized release bundles.")
 app.add_typer(models_app, name="models")
 app.add_typer(benchmarks_app, name="benchmarks")
+app.add_typer(report_app, name="report")
+app.add_typer(release_app, name="release")
 console = Console()
 
 
@@ -129,6 +135,48 @@ def run(
         output_root=output_root,
     )
     console.print(f"[green]Run completed:[/green] {run_directory}")
+
+
+def _resolve_directory(identifier: str, root: Path) -> Path:
+    direct = Path(identifier)
+    directory = direct if direct.is_dir() else root / identifier
+    if not directory.is_dir():
+        raise typer.BadParameter(f"directory does not exist: {directory}")
+    return directory.resolve()
+
+
+@report_app.command("build")
+def report_build(
+    run_id: str,
+    runs_root: Annotated[Path, typer.Option()] = Path("runs"),
+) -> None:
+    directory = _resolve_directory(run_id, runs_root)
+    report_directory = build_report(directory)
+    console.print(f"[green]Report built:[/green] {report_directory}")
+
+
+@release_app.command("build")
+def release_build(
+    run_id: str,
+    runs_root: Annotated[Path, typer.Option()] = Path("runs"),
+    output_root: Annotated[Path, typer.Option()] = Path("release-staging"),
+) -> None:
+    load_dotenv()
+    directory = _resolve_directory(run_id, runs_root)
+    release_directory, archive = build_release(directory, output_root=output_root)
+    console.print(f"[green]Release built:[/green] {release_directory}")
+    console.print(f"[green]Archive:[/green] {archive}")
+
+
+@release_app.command("validate")
+def release_validate(
+    release_id: str,
+    releases_root: Annotated[Path, typer.Option()] = Path("release-staging"),
+) -> None:
+    load_dotenv()
+    directory = _resolve_directory(release_id, releases_root)
+    validate_release(directory)
+    console.print(f"[green]Release is valid:[/green] {directory}")
 
 
 def main() -> None:

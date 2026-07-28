@@ -57,17 +57,23 @@ BFCL 官方 runner 支持 `REMOTE_OPENAI_BASE_URL` 和
 tool calling 是否可用”，不是“学院部署比官方模型退化了多少”。后一个问题应优先用
 官方模型卡报告过的 Toolathlon、τ³-bench、Claw-Eval、MCP-Atlas 或 MCPMark。
 
-官方复现实验给出的版本是 `bfcl-eval==2025.12.17`。若要与官网榜单比较，应固定该版本或官网指定 commit，并把版本写进报告。本仓库已经封装了
-EvalScope adapter：
+官方复现实验给出的版本是 `bfcl-eval==2025.12.17`。若要与官网榜单比较，应固定
+该版本或官网指定 commit，并把版本写进报告。本仓库已经封装了 EvalScope adapter。
+要单独执行 BFCL smoke，请复制一个 experiment plan，仅保留 `bfcl-v4`，将
+`profile` 设为 `smoke`；如需限制样本数，可在 `options` 中设置 `limit`：
 
-```bash
-uv sync --project benchmark-envs/bfcl --frozen
-
-tooluse-bench bfcl --model glm-5.2 --limit 10
+```yaml
+benchmarks:
+  - benchmark_id: bfcl-v4
+    profile: smoke
+    trials: 3
+    options:
+      limit: 10
 ```
 
-默认先跑 8 个单轮/多轮核心子集；可以重复传 `--subset` 精确选择。每个 endpoint
-使用独立缓存目录，避免结果串模型。命令参数可能随 BFCL 或 EvalScope 版本变化；
+`smoke` 覆盖 simple、parallel 和 irrelevance；`core` 覆盖 8 个单轮/多轮核心
+子集；`full-public` 覆盖本仓库固定的全部 22 个公共子集。每个 endpoint 使用独立
+运行目录，避免结果串模型。上游命令参数可能随 BFCL 或 EvalScope 版本变化；
 正式报告要记录 `pip freeze`，并以固定版本的
 [BFCL 官方 README](https://github.com/ShishirPatil/gorilla/blob/main/berkeley-function-call-leaderboard/README.md)
 与 [EvalScope BFCL V4 文档](https://evalscope.readthedocs.io/en/v1.2.0/third_party/bfcl_v4.html)

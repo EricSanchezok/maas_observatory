@@ -1,0 +1,334 @@
+schema_version: 1
+
+# Scores use a 0–100 percentage scale. Contextual baselines are never used to
+# calculate an official delta; they provide sourced reference points only.
+baselines:
+  - baseline_id: glm-5-2.toolathlon-verified.pass-at-1
+    upstream_model: GLM-5.2 (max)
+    benchmark_id: toolathlon-verified
+    benchmark_release: verified-2026-06-30
+    metric: pass_at_1
+    score: 59.9
+    precision: upstream leaderboard deployment
+    reasoning_mode: max
+    source_kind: benchmark_leaderboard
+    source_url: https://toolathlon.xyz/docs/leaderboard
+    accessed_at: 2026-07-28
+    comparability: contextual
+    notes: Independently evaluated by the benchmark team.
+
+  - baseline_id: glm-5-2.toolathlon-legacy.pass-at-1
+    upstream_model: GLM-5.2
+    benchmark_id: toolathlon-legacy
+    benchmark_release: pre-verified
+    metric: pass_at_1
+    score: 48.2
+    precision: upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/zai-org/GLM-5.2
+    accessed_at: 2026-07-28
+    comparability: contextual
+    notes: Not comparable with Toolathlon-Verified.
+
+  - baseline_id: glm-5-2.mcp-atlas-public.score
+    upstream_model: GLM-5.2
+    benchmark_id: mcp-atlas-public
+    benchmark_release: vendor-reported
+    metric: score
+    score: 76.8
+    precision: upstream release
+    reasoning_mode: think
+    source_kind: vendor_report
+    source_url: https://huggingface.co/zai-org/GLM-5.2
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: glm-5-2.hle-tools.score
+    upstream_model: GLM-5.2
+    benchmark_id: hle-with-tools
+    benchmark_release: vendor-reported
+    metric: score
+    score: 54.7
+    precision: upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/zai-org/GLM-5.2
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: deepseek-v4-pro.toolathlon-verified.pass-at-1
+    upstream_model: DeepSeek-V4-Pro (max)
+    benchmark_id: toolathlon-verified
+    benchmark_release: verified-2026-06-30
+    metric: pass_at_1
+    score: 55.9
+    precision: upstream leaderboard deployment
+    reasoning_mode: max
+    source_kind: benchmark_leaderboard
+    source_url: https://toolathlon.xyz/docs/leaderboard
+    accessed_at: 2026-07-28
+    comparability: contextual
+    notes: Independently evaluated by the benchmark team.
+
+  - baseline_id: deepseek-v4-pro.toolathlon-legacy.pass-at-1
+    upstream_model: DeepSeek-V4-Pro
+    benchmark_id: toolathlon-legacy
+    benchmark_release: pre-verified
+    metric: pass_at_1
+    score: 51.8
+    precision: upstream release
+    reasoning_mode: max
+    source_kind: vendor_report
+    source_url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: deepseek-v4-pro.mcp-atlas.score
+    upstream_model: DeepSeek-V4-Pro
+    benchmark_id: mcp-atlas
+    benchmark_release: vendor-reported
+    metric: score
+    score: 73.6
+    precision: upstream release
+    reasoning_mode: max
+    source_kind: vendor_report
+    source_url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: deepseek-v4-pro.hle-tools.score
+    upstream_model: DeepSeek-V4-Pro
+    benchmark_id: hle-with-tools
+    benchmark_release: vendor-reported
+    metric: score
+    score: 48.2
+    precision: upstream release
+    reasoning_mode: max
+    source_kind: vendor_report
+    source_url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: deepseek-v4-flash.toolathlon-legacy.pass-at-1
+    upstream_model: DeepSeek-V4-Flash
+    benchmark_id: toolathlon-legacy
+    benchmark_release: pre-verified
+    metric: pass_at_1
+    score: 47.8
+    precision: upstream release
+    reasoning_mode: max
+    source_kind: vendor_report
+    source_url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: deepseek-v4-flash.mcp-atlas.score
+    upstream_model: DeepSeek-V4-Flash
+    benchmark_id: mcp-atlas
+    benchmark_release: vendor-reported
+    metric: score
+    score: 69.0
+    precision: upstream release
+    reasoning_mode: max
+    source_kind: vendor_report
+    source_url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: deepseek-v4-flash.hle-tools.score
+    upstream_model: DeepSeek-V4-Flash
+    benchmark_id: hle-with-tools
+    benchmark_release: vendor-reported
+    metric: score
+    score: 45.1
+    precision: upstream release
+    reasoning_mode: max
+    source_kind: vendor_report
+    source_url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: nex-n2-pro.toolathlon-legacy.pass-at-1
+    upstream_model: Nex-N2-Pro
+    benchmark_id: toolathlon-legacy
+    benchmark_release: pre-verified
+    metric: pass_at_1
+    score: 51.9
+    precision: upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/nex-agi/Nex-N2-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: nex-n2-pro.tau3.score
+    upstream_model: Nex-N2-Pro
+    benchmark_id: tau3-bench
+    benchmark_release: vendor-reported
+    metric: score
+    score: 71.1
+    precision: upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/nex-agi/Nex-N2-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: kimi-k2-6.toolathlon-verified.pass-at-1
+    upstream_model: Kimi-K2.6
+    benchmark_id: toolathlon-verified
+    benchmark_release: verified-2026-06-30
+    metric: pass_at_1
+    score: 58.0
+    precision: upstream leaderboard deployment
+    reasoning_mode: reported
+    source_kind: benchmark_leaderboard
+    source_url: https://toolathlon.xyz/docs/leaderboard
+    accessed_at: 2026-07-28
+    comparability: contextual
+    notes: Independently evaluated by the benchmark team.
+
+  - baseline_id: kimi-k2-6.toolathlon-legacy.pass-at-1
+    upstream_model: Kimi-K2.6
+    benchmark_id: toolathlon-legacy
+    benchmark_release: pre-verified
+    metric: pass_at_1
+    score: 50.0
+    precision: upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/moonshotai/Kimi-K2.6
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: kimi-k2-6.claw-eval.pass-pow-3
+    upstream_model: Kimi-K2.6
+    benchmark_id: claw-eval
+    benchmark_release: vendor-reported
+    metric: pass_pow_3
+    score: 62.3
+    precision: upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/moonshotai/Kimi-K2.6
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: kimi-k2-6.mcpmark.score
+    upstream_model: Kimi-K2.6
+    benchmark_id: mcpmark
+    benchmark_release: vendor-reported
+    metric: score
+    score: 55.9
+    precision: upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/moonshotai/Kimi-K2.6
+    accessed_at: 2026-07-28
+    comparability: contextual
+    notes: MCPMark is not MCP-Atlas.
+
+  - baseline_id: minimax-m2-7.toolathlon-legacy.pass-at-1
+    upstream_model: MiniMax-M2.7
+    benchmark_id: toolathlon-legacy
+    benchmark_release: pre-verified
+    metric: pass_at_1
+    score: 46.3
+    precision: upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://github.com/MiniMax-AI/MiniMax-M2.7
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: minimax-m2-7.mm-claw.score
+    upstream_model: MiniMax-M2.7
+    benchmark_id: mm-claw
+    benchmark_release: vendor-reported
+    metric: score
+    score: 62.7
+    precision: upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://github.com/MiniMax-AI/MiniMax-M2.7
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: mimo-v2-5-pro.tau3.score
+    upstream_model: MiMo-V2.5-Pro
+    benchmark_id: tau3-bench
+    benchmark_release: vendor-reported
+    metric: score
+    score: 72.9
+    precision: FP8 mixed upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/XiaomiMiMo/MiMo-V2.5-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: mimo-v2-5-pro.claw-eval.pass-pow-3
+    upstream_model: MiMo-V2.5-Pro
+    benchmark_id: claw-eval
+    benchmark_release: vendor-reported
+    metric: pass_pow_3
+    score: 63.8
+    precision: FP8 mixed upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/XiaomiMiMo/MiMo-V2.5-Pro
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: qwen3-6-27b.claw-eval.pass-pow-3
+    upstream_model: Qwen3.6-27B
+    benchmark_id: claw-eval
+    benchmark_release: vendor-reported
+    metric: pass_pow_3
+    score: 60.6
+    precision: BF16 upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/Qwen/Qwen3.6-27B
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: qwen3-6-27b.claw-eval.average
+    upstream_model: Qwen3.6-27B
+    benchmark_id: claw-eval
+    benchmark_release: vendor-reported
+    metric: average
+    score: 72.4
+    precision: BF16 upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/Qwen/Qwen3.6-27B
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: qwen3-6-27b.qwen-claw.score
+    upstream_model: Qwen3.6-27B
+    benchmark_id: qwen-claw-bench
+    benchmark_release: vendor-reported
+    metric: score
+    score: 53.4
+    precision: BF16 upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/Qwen/Qwen3.6-27B
+    accessed_at: 2026-07-28
+    comparability: contextual
+
+  - baseline_id: qwen3-6-27b.skillsbench.avg5
+    upstream_model: Qwen3.6-27B
+    benchmark_id: skillsbench
+    benchmark_release: vendor-reported
+    metric: avg5
+    score: 48.2
+    precision: BF16 upstream release
+    reasoning_mode: reported
+    source_kind: vendor_report
+    source_url: https://huggingface.co/Qwen/Qwen3.6-27B
+    accessed_at: 2026-07-28
+    comparability: contextual

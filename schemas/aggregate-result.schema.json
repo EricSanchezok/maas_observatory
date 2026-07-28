@@ -1,0 +1,284 @@
+{
+  "$defs": {
+    "Lane": {
+      "enum": [
+        "standardized",
+        "official-reproduction"
+      ],
+      "title": "Lane",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "benchmark_id": {
+      "title": "Benchmark Id",
+      "type": "string"
+    },
+    "benchmark_version": {
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "deployment_id": {
+      "title": "Deployment Id",
+      "type": "string"
+    },
+    "error_categories": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Error Categories",
+      "type": "object"
+    },
+    "error_rate": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Rate"
+    },
+    "exact_baseline_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Exact Baseline Id"
+    },
+    "exact_baseline_score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Exact Baseline Score"
+    },
+    "expected_trials": {
+      "minimum": 1,
+      "title": "Expected Trials",
+      "type": "integer"
+    },
+    "lane": {
+      "$ref": "#/$defs/Lane"
+    },
+    "latency_p50_seconds": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Latency P50 Seconds"
+    },
+    "latency_p95_seconds": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Latency P95 Seconds"
+    },
+    "mean_score": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mean Score"
+    },
+    "mean_tool_calls": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mean Tool Calls"
+    },
+    "mean_total_tokens": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mean Total Tokens"
+    },
+    "mean_turns": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mean Turns"
+    },
+    "model_alias": {
+      "title": "Model Alias",
+      "type": "string"
+    },
+    "not_run_count": {
+      "minimum": 0,
+      "title": "Not Run Count",
+      "type": "integer"
+    },
+    "official_delta": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Official Delta"
+    },
+    "pass_at_1": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pass At 1"
+    },
+    "pass_at_1_ci_high": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pass At 1 Ci High"
+    },
+    "pass_at_1_ci_low": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pass At 1 Ci Low"
+    },
+    "pass_at_3": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pass At 3"
+    },
+    "pass_pow_3": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pass Pow 3"
+    },
+    "profile": {
+      "title": "Profile",
+      "type": "string"
+    },
+    "record_count": {
+      "minimum": 0,
+      "title": "Record Count",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "task_count": {
+      "minimum": 0,
+      "title": "Task Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "benchmark_id",
+    "benchmark_version",
+    "profile",
+    "lane",
+    "deployment_id",
+    "model_alias",
+    "expected_trials",
+    "task_count",
+    "record_count",
+    "not_run_count"
+  ],
+  "title": "AggregateResult",
+  "type": "object"
+}

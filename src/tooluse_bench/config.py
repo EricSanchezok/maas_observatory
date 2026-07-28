@@ -9,10 +9,12 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
+from tooluse_bench.baselines import BaselineRegistry
 from tooluse_bench.domain import ExperimentPlan, ModelCatalog, ModelDeployment
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CATALOG = PROJECT_ROOT / "config" / "models.yaml"
+DEFAULT_BASELINES = PROJECT_ROOT / "config" / "baselines.yaml"
 DEFAULT_EXPERIMENT = PROJECT_ROOT / "config" / "experiments" / "release-v1.yaml"
 DEFAULT_DOTENV = PROJECT_ROOT / ".env"
 
@@ -67,6 +69,10 @@ def load_model_catalog(path: Path = DEFAULT_CATALOG) -> ModelCatalog:
 
 def load_experiment(path: Path = DEFAULT_EXPERIMENT) -> ExperimentPlan:
     return _validate_yaml(path, ExperimentPlan)
+
+
+def load_baselines(path: Path = DEFAULT_BASELINES) -> BaselineRegistry:
+    return _validate_yaml(path, BaselineRegistry)
 
 
 def load_catalog(path: Path = DEFAULT_CATALOG) -> list[ModelDeployment]:

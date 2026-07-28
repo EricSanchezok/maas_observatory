@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "BaselineRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "accessed_at": {
+          "format": "date",
+          "title": "Accessed At",
+          "type": "string"
+        },
+        "baseline_id": {
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "title": "Baseline Id",
+          "type": "string"
+        },
+        "benchmark_id": {
+          "title": "Benchmark Id",
+          "type": "string"
+        },
+        "benchmark_release": {
+          "title": "Benchmark Release",
+          "type": "string"
+        },
+        "comparability": {
+          "$ref": "#/$defs/Comparability"
+        },
+        "compatible_deployments": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Compatible Deployments",
+          "type": "array"
+        },
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "notes": {
+          "default": "",
+          "title": "Notes",
+          "type": "string"
+        },
+        "precision": {
+          "title": "Precision",
+          "type": "string"
+        },
+        "reasoning_mode": {
+          "title": "Reasoning Mode",
+          "type": "string"
+        },
+        "scale": {
+          "const": "percent",
+          "default": "percent",
+          "title": "Scale",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        },
+        "settings": {
+          "additionalProperties": true,
+          "title": "Settings",
+          "type": "object"
+        },
+        "source_kind": {
+          "$ref": "#/$defs/BaselineSourceKind"
+        },
+        "source_url": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Source Url",
+          "type": "string"
+        },
+        "upstream_model": {
+          "title": "Upstream Model",
+          "type": "string"
+        }
+      },
+      "required": [
+        "baseline_id",
+        "upstream_model",
+        "benchmark_id",
+        "benchmark_release",
+        "metric",
+        "score",
+        "precision",
+        "reasoning_mode",
+        "source_kind",
+        "source_url",
+        "accessed_at",
+        "comparability"
+      ],
+      "title": "BaselineRecord",
+      "type": "object"
+    },
+    "BaselineSourceKind": {
+      "enum": [
+        "vendor_report",
+        "benchmark_leaderboard",
+        "independent_control"
+      ],
+      "title": "BaselineSourceKind",
+      "type": "string"
+    },
+    "Comparability": {
+      "enum": [
+        "exact",
+        "contextual",
+        "incompatible"
+      ],
+      "title": "Comparability",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "baselines": {
+      "items": {
+        "$ref": "#/$defs/BaselineRecord"
+      },
+      "minItems": 1,
+      "title": "Baselines",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "baselines"
+  ],
+  "title": "BaselineRegistry",
+  "type": "object"
+}

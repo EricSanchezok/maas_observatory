@@ -1,0 +1,18 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format check
+        entry: uv run ruff format --check src tests scripts
+        language: system
+        pass_filenames: false
+      - id: ruff-check
+        name: ruff lint
+        entry: uv run ruff check src tests scripts
+        language: system
+        pass_filenames: false
+      - id: secret-scan
+        name: repository secret scan
+        entry: uv run python scripts/scan_secrets.py
+        language: system
+        pass_filenames: false

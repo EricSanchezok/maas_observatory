@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "data_license": {
+      "const": "CC-BY-4.0",
+      "default": "CC-BY-4.0",
+      "title": "Data License",
+      "type": "string"
+    },
+    "files": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Files",
+      "type": "array"
+    },
+    "git_commit": {
+      "title": "Git Commit",
+      "type": "string"
+    },
+    "published_results_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Published Results Sha256",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source_results_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Source Results Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "git_commit",
+    "created_at",
+    "files",
+    "source_results_sha256",
+    "published_results_sha256"
+  ],
+  "title": "ReleaseMetadata",
+  "type": "object"
+}

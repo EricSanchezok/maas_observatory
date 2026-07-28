@@ -1,0 +1,23 @@
+site_name: SII Holos Tool-use Bench
+site_description: Reproducible tool-use evaluation for SII Holos deployments
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Methodology: methodology.md
+  - Reproducibility: reproducibility.md
+  - Results: results.md
+  - Baselines: official-baseline-matrix.md
+  - Benchmark research: benchmark-research.md
+  - Extending the harness: adding-models-and-benchmarks.md
+  - Data and licensing: data-and-licensing.md
+  - Security: security.md
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+strict: true

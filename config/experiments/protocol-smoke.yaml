@@ -1,0 +1,13 @@
+schema_version: 1
+experiment_id: protocol-smoke-v1
+description: Three-trial native OpenAI tool-calling protocol probe for every deployment.
+models:
+  - "*"
+lanes:
+  - standardized
+output_root: runs
+benchmarks:
+  - benchmark_id: probe
+    profile: full
+    trials: 3
+    options: {}
