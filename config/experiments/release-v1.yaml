@@ -8,16 +8,25 @@ benchmarks:
   - benchmark_id: probe
     profile: full
     trials: 3
-    options: {}
+    options:
+      transport_timeout_seconds: 90
+      transport_wall_timeout_seconds: 60
+      transport_max_retries: 0
+      max_tokens: 4096
   - benchmark_id: bfcl-v4
     profile: full-public
     trials: 3
     options:
       backend: evalscope
+      batch_size: 1
+      temperature: 0
+      timeout_seconds: 21600
   - benchmark_id: toolathlon-verified
     profile: official
     trials: 3
     options:
       backend: self-hosted
+      workers: 10
+      timeout_seconds: 21600
       server_revision: 2aed2468858f15818acafa178518390cc4b0f5cb
       task_image: docker.io/lockon0927/toolathlon-task-image@sha256:4d04fe4e0a6fdb4946f51bb05120cb44a0eef980231c11252f93b62897afcb9f

@@ -65,7 +65,10 @@ options. The protocol smoke uses a 90-second inactivity timeout, a 30-second
 POSIX wall-clock deadline, and no retry so an unavailable endpoint cannot stall
 the diagnostic gate. Real deadline-bound requests run in a clean spawned worker
 that the parent can terminate; credentials remain in process memory and never
-enter the command line. The release plan retains the transport defaults.
+enter the command line. The release plan explicitly records a 90-second
+inactivity timeout, a 60-second wall deadline, no retry, and a 4,096-token cap
+for each protocol-probe request. BFCL and Toolathlon each record a six-hour
+benchmark-process ceiling; BFCL fsyncs every completed subset before continuing.
 
 ## Report and publish
 
