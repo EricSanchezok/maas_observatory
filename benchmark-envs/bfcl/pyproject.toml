@@ -1,0 +1,11 @@
+[project]
+name = "sii-tooluse-bfcl-runtime"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "bfcl-eval==2025.12.17",
+  "evalscope==1.2.0",
+]
+
+[tool.uv]
+package = false

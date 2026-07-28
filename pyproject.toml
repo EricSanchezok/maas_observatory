@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sii-tooluse-bench"
+version = "0.2.0"
+description = "Reproducible tool-use evaluation for SII Holos OpenAI-compatible deployments"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = "Apache-2.0"
+dependencies = [
+  "httpx>=0.28.1,<1",
+  "pydantic>=2.11,<3",
+  "PyYAML>=6.0.2,<7",
+  "typer>=0.16,<1",
+]
+
+[project.optional-dependencies]
+report = [
+  "jinja2>=3.1.6,<4",
+]
+dev = [
+  "hypothesis>=6.135,<7",
+  "mypy>=1.16,<2",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "pytest-httpx>=0.35,<1",
+  "ruff>=0.12,<1",
+  "types-PyYAML>=6.0.12,<7",
+]
+
+[project.scripts]
+tooluse-bench = "tooluse_bench.cli:main"
+
+[project.entry-points."tooluse_bench.benchmarks"]
+probe = "tooluse_bench.benchmarks.probe:ProbeAdapter"
+bfcl-v4 = "tooluse_bench.benchmarks.bfcl:BFCLAdapter"
+toolathlon-verified = "tooluse_bench.benchmarks.toolathlon:ToolathlonAdapter"
+
+[tool.uv]
+managed = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tooluse_bench"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["tooluse_bench"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["tooluse_bench"]
+
+[[tool.mypy.overrides]]
+module = ["evalscope.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]

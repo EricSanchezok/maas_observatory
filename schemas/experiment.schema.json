@@ -1,0 +1,102 @@
+{
+  "$defs": {
+    "BenchmarkSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "benchmark_id": {
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "title": "Benchmark Id",
+          "type": "string"
+        },
+        "options": {
+          "additionalProperties": true,
+          "title": "Options",
+          "type": "object"
+        },
+        "profile": {
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "title": "Profile",
+          "type": "string"
+        },
+        "trials": {
+          "default": 3,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Trials",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "benchmark_id",
+        "profile"
+      ],
+      "title": "BenchmarkSelection",
+      "type": "object"
+    },
+    "Lane": {
+      "enum": [
+        "standardized",
+        "official-reproduction"
+      ],
+      "title": "Lane",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "benchmarks": {
+      "items": {
+        "$ref": "#/$defs/BenchmarkSelection"
+      },
+      "minItems": 1,
+      "title": "Benchmarks",
+      "type": "array"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "experiment_id": {
+      "pattern": "^[a-z0-9][a-z0-9.-]*$",
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "lanes": {
+      "items": {
+        "$ref": "#/$defs/Lane"
+      },
+      "minItems": 1,
+      "title": "Lanes",
+      "type": "array"
+    },
+    "models": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Models",
+      "type": "array"
+    },
+    "output_root": {
+      "default": "runs",
+      "format": "path",
+      "title": "Output Root",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "description",
+    "models",
+    "lanes",
+    "benchmarks"
+  ],
+  "title": "ExperimentPlan",
+  "type": "object"
+}

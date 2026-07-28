@@ -1,0 +1,250 @@
+{
+  "$defs": {
+    "Capabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "reasoning": {
+          "title": "Reasoning",
+          "type": "boolean"
+        },
+        "temperature": {
+          "title": "Temperature",
+          "type": "boolean"
+        },
+        "tool_call_declared": {
+          "title": "Tool Call Declared",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "reasoning",
+        "temperature",
+        "tool_call_declared"
+      ],
+      "title": "Capabilities",
+      "type": "object"
+    },
+    "CatalogDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": {
+          "default": 600,
+          "exclusiveMinimum": 0,
+          "title": "Timeout Seconds",
+          "type": "number"
+        }
+      },
+      "title": "CatalogDefaults",
+      "type": "object"
+    },
+    "EndpointReference": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key_env": {
+          "title": "Api Key Env",
+          "type": "string"
+        },
+        "base_url_env": {
+          "title": "Base Url Env",
+          "type": "string"
+        }
+      },
+      "required": [
+        "base_url_env",
+        "api_key_env"
+      ],
+      "title": "EndpointReference",
+      "type": "object"
+    },
+    "ModelDeployment": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "title": "Alias",
+          "type": "string"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities"
+        },
+        "context_limit": {
+          "exclusiveMinimum": 0,
+          "title": "Context Limit",
+          "type": "integer"
+        },
+        "deployment_id": {
+          "pattern": "^[a-z0-9][a-z0-9.-]*$",
+          "title": "Deployment Id",
+          "type": "string"
+        },
+        "endpoint": {
+          "$ref": "#/$defs/EndpointReference"
+        },
+        "family": {
+          "title": "Family",
+          "type": "string"
+        },
+        "input_modalities": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Input Modalities",
+          "type": "array"
+        },
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "output_limit": {
+          "exclusiveMinimum": 0,
+          "title": "Output Limit",
+          "type": "integer"
+        },
+        "precision": {
+          "$ref": "#/$defs/Precision"
+        },
+        "profiles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RequestProfile"
+          },
+          "title": "Profiles",
+          "type": "object"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "request_defaults": {
+          "additionalProperties": true,
+          "title": "Request Defaults",
+          "type": "object"
+        },
+        "serving": {
+          "$ref": "#/$defs/ServingMetadata"
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Seconds"
+        },
+        "upstream_model": {
+          "title": "Upstream Model",
+          "type": "string"
+        },
+        "upstream_source": {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "title": "Upstream Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deployment_id",
+        "alias",
+        "name",
+        "provider",
+        "family",
+        "upstream_model",
+        "upstream_source",
+        "model_id",
+        "precision",
+        "context_limit",
+        "output_limit",
+        "input_modalities",
+        "endpoint",
+        "capabilities"
+      ],
+      "title": "ModelDeployment",
+      "type": "object"
+    },
+    "Precision": {
+      "enum": [
+        "BF16",
+        "FP8-mixed",
+        "W4A8",
+        "W8A8",
+        "unknown"
+      ],
+      "title": "Precision",
+      "type": "string"
+    },
+    "RequestProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "request_overrides": {
+          "additionalProperties": true,
+          "title": "Request Overrides",
+          "type": "object"
+        }
+      },
+      "title": "RequestProfile",
+      "type": "object"
+    },
+    "ServingMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "chat_template": {
+          "default": "unknown",
+          "title": "Chat Template",
+          "type": "string"
+        },
+        "engine": {
+          "default": "unknown",
+          "title": "Engine",
+          "type": "string"
+        },
+        "reasoning_parser": {
+          "default": "unknown",
+          "title": "Reasoning Parser",
+          "type": "string"
+        },
+        "tool_call_parser": {
+          "default": "unknown",
+          "title": "Tool Call Parser",
+          "type": "string"
+        }
+      },
+      "title": "ServingMetadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "defaults": {
+      "$ref": "#/$defs/CatalogDefaults"
+    },
+    "deployments": {
+      "items": {
+        "$ref": "#/$defs/ModelDeployment"
+      },
+      "minItems": 1,
+      "title": "Deployments",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "deployments"
+  ],
+  "title": "ModelCatalog",
+  "type": "object"
+}

@@ -1,0 +1,260 @@
+schema_version: 1
+
+defaults:
+  timeout_seconds: 600
+
+deployments:
+  - deployment_id: sii-holos-deepseek-v4-pro-w4a8
+    alias: deepseek-v4-pro
+    name: SII Holos · DeepSeek V4 Pro (W4A8)
+    provider: SII Holos
+    family: deepseek-v4
+    upstream_model: DeepSeek-V4-Pro
+    upstream_source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
+    model_id: ds-v4-pro
+    precision: W4A8
+    context_limit: 1000000
+    output_limit: 393216
+    input_modalities: [text]
+    endpoint:
+      base_url_env: SII_HOLOS_DEEPSEEK_V4_PRO_BASE_URL
+      api_key_env: SII_HOLOS_DEEPSEEK_V4_PRO_API_KEY
+    capabilities:
+      reasoning: true
+      temperature: true
+      tool_call_declared: true
+    serving:
+      engine: unknown
+      chat_template: dedicated DeepSeek V4 encoding
+      reasoning_parser: unknown
+      tool_call_parser: unknown
+    profiles:
+      thinking:
+        request_overrides:
+          chat_template_kwargs:
+            thinking: true
+
+  - deployment_id: sii-holos-deepseek-v4-flash-w8a8
+    alias: deepseek-v4-flash
+    name: SII Holos · DeepSeek V4 Flash (W8A8)
+    provider: SII Holos
+    family: deepseek-v4
+    upstream_model: DeepSeek-V4-Flash
+    upstream_source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
+    model_id: ds-v4-flash
+    precision: W8A8
+    context_limit: 1000000
+    output_limit: 384000
+    input_modalities: [text]
+    endpoint:
+      base_url_env: SII_HOLOS_DEEPSEEK_V4_FLASH_BASE_URL
+      api_key_env: SII_HOLOS_DEEPSEEK_V4_FLASH_API_KEY
+    capabilities:
+      reasoning: true
+      temperature: true
+      tool_call_declared: true
+    serving:
+      engine: vLLM Ascend
+      chat_template: dedicated DeepSeek V4 encoding
+      reasoning_parser: unknown
+      tool_call_parser: unknown
+    profiles:
+      thinking:
+        request_overrides:
+          chat_template_kwargs:
+            thinking: true
+
+  - deployment_id: sii-holos-glm-5-2-w4a8
+    alias: glm-5.2
+    name: SII Holos · GLM 5.2 (W4A8)
+    provider: SII Holos
+    family: glm
+    upstream_model: GLM-5.2
+    upstream_source: https://huggingface.co/zai-org/GLM-5.2
+    model_id: GLM-5.2-w4a8
+    precision: W4A8
+    context_limit: 200000
+    output_limit: 131072
+    input_modalities: [text]
+    endpoint:
+      base_url_env: SII_HOLOS_GLM_5_2_BASE_URL
+      api_key_env: SII_HOLOS_GLM_5_2_API_KEY
+    capabilities:
+      reasoning: true
+      temperature: true
+      tool_call_declared: true
+    serving:
+      engine: unknown
+      chat_template: unknown
+      reasoning_parser: unknown
+      tool_call_parser: unknown
+    profiles:
+      no-thinking:
+        request_overrides:
+          chat_template_kwargs:
+            enable_thinking: false
+
+  - deployment_id: sii-holos-qwen3-6-27b-bf16
+    alias: qwen3.6-27b
+    name: SII Holos · Qwen 3.6 27B (BF16)
+    provider: SII Holos
+    family: qwen
+    upstream_model: Qwen3.6-27B
+    upstream_source: https://huggingface.co/Qwen/Qwen3.6-27B
+    model_id: Qwen3.6-27B
+    precision: BF16
+    context_limit: 1000000
+    output_limit: 65536
+    input_modalities: [text, image]
+    endpoint:
+      base_url_env: SII_HOLOS_QWEN3_6_27B_BASE_URL
+      api_key_env: SII_HOLOS_QWEN3_6_27B_API_KEY
+    capabilities:
+      reasoning: true
+      temperature: true
+      tool_call_declared: true
+    serving:
+      engine: unknown
+      chat_template: unknown
+      reasoning_parser: unknown
+      tool_call_parser: qwen3_coder
+    profiles:
+      no-thinking:
+        request_overrides:
+          chat_template_kwargs:
+            enable_thinking: false
+
+  - deployment_id: sii-holos-kimi-k2-6-w4a8
+    alias: kimi-k2.6
+    name: SII Holos · Kimi K2.6 (W4A8)
+    provider: SII Holos
+    family: kimi-k2
+    upstream_model: Kimi-K2.6
+    upstream_source: https://huggingface.co/moonshotai/Kimi-K2.6
+    model_id: kimi-k2.6-w4a8
+    precision: W4A8
+    context_limit: 256000
+    output_limit: 262144
+    input_modalities: [text, image]
+    endpoint:
+      base_url_env: SII_HOLOS_KIMI_K2_6_BASE_URL
+      api_key_env: SII_HOLOS_KIMI_K2_6_API_KEY
+    capabilities:
+      reasoning: true
+      temperature: true
+      tool_call_declared: true
+    serving:
+      engine: unknown
+      chat_template: unknown
+      reasoning_parser: unknown
+      tool_call_parser: unknown
+    profiles:
+      no-thinking:
+        request_overrides:
+          chat_template_kwargs:
+            thinking: false
+
+  - deployment_id: sii-holos-minimax-m2-7-w8a8
+    alias: minimax-m2.7
+    name: SII Holos · MiniMax M2.7 (W8A8)
+    provider: SII Holos
+    family: minimax-m2
+    upstream_model: MiniMax-M2.7
+    upstream_source: https://huggingface.co/MiniMaxAI/MiniMax-M2.7
+    model_id: MiniMax-M2.7-w8a8
+    precision: W8A8
+    context_limit: 192000
+    output_limit: 131072
+    input_modalities: [text, image]
+    endpoint:
+      base_url_env: SII_HOLOS_MINIMAX_M2_7_BASE_URL
+      api_key_env: SII_HOLOS_MINIMAX_M2_7_API_KEY
+    capabilities:
+      reasoning: true
+      temperature: true
+      tool_call_declared: true
+    serving:
+      engine: unknown
+      chat_template: unknown
+      reasoning_parser: unknown
+      tool_call_parser: unknown
+
+  - deployment_id: sii-holos-mimo-v2-5-pro-w8a8
+    alias: mimo-v2.5-pro
+    name: SII Holos · MiMo V2.5 Pro (W8A8)
+    provider: SII Holos
+    family: mimo-v2
+    upstream_model: MiMo-V2.5-Pro
+    upstream_source: https://huggingface.co/XiaomiMiMo/MiMo-V2.5-Pro
+    model_id: MiMo-V2.5-PRO-W8A8
+    precision: W8A8
+    context_limit: 1000000
+    output_limit: 131072
+    input_modalities: [text, image]
+    endpoint:
+      base_url_env: SII_HOLOS_MIMO_V2_5_PRO_BASE_URL
+      api_key_env: SII_HOLOS_MIMO_V2_5_PRO_API_KEY
+    capabilities:
+      reasoning: true
+      temperature: true
+      tool_call_declared: true
+    serving:
+      engine: unknown
+      chat_template: unknown
+      reasoning_parser: mimo
+      tool_call_parser: mimo
+
+  - deployment_id: sii-holos-nex-n2-pro-w8a8
+    alias: nex-n2-pro-w8a8
+    name: SII Holos · Nex N2 Pro (W8A8)
+    provider: SII Holos
+    family: nex-n2
+    upstream_model: Nex-N2-Pro
+    upstream_source: https://huggingface.co/nex-agi/Nex-N2-Pro
+    model_id: Nex-N2-Pro-W8A8
+    precision: W8A8
+    context_limit: 256000
+    output_limit: 131072
+    input_modalities: [text, image]
+    endpoint:
+      base_url_env: SII_HOLOS_NEX_N2_PRO_W8A8_BASE_URL
+      api_key_env: SII_HOLOS_NEX_N2_PRO_W8A8_API_KEY
+    capabilities:
+      reasoning: true
+      temperature: true
+      tool_call_declared: true
+    serving:
+      engine: unknown
+      chat_template: unknown
+      reasoning_parser: unknown
+      tool_call_parser: unknown
+
+  - deployment_id: sii-holos-nex-n2-pro-bf16
+    alias: nex-n2-pro-bf16
+    name: SII Holos · Nex N2 Pro (BF16)
+    provider: SII Holos
+    family: nex-n2
+    upstream_model: Nex-N2-Pro
+    upstream_source: https://huggingface.co/nex-agi/Nex-N2-Pro
+    model_id: Nex-N2-Pro
+    precision: BF16
+    context_limit: 256000
+    output_limit: 131072
+    input_modalities: [text, image]
+    endpoint:
+      base_url_env: SII_HOLOS_NEX_N2_PRO_BF16_BASE_URL
+      api_key_env: SII_HOLOS_NEX_N2_PRO_BF16_API_KEY
+    capabilities:
+      reasoning: true
+      temperature: true
+      tool_call_declared: true
+    serving:
+      engine: unknown
+      chat_template: unknown
+      reasoning_parser: unknown
+      tool_call_parser: unknown
+    profiles:
+      thinking:
+        request_overrides:
+          chat_template_kwargs:
+            enable_thinking: true

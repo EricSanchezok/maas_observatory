@@ -1,0 +1,21 @@
+schema_version: 1
+experiment_id: release-v1
+description: First public SII Holos tool-use evaluation.
+models: ["*"]
+lanes: [standardized, official-reproduction]
+output_root: runs
+benchmarks:
+  - benchmark_id: probe
+    profile: full
+    trials: 3
+    options: {}
+  - benchmark_id: bfcl-v4
+    profile: full-public
+    trials: 3
+    options:
+      backend: evalscope
+  - benchmark_id: toolathlon-verified
+    profile: official
+    trials: 3
+    options:
+      backend: self-hosted
