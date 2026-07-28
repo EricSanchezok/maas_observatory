@@ -267,6 +267,9 @@ def test_bfcl_adapter_normalizes_results_and_failures(tmp_path: Path) -> None:
     )
     assert spec["limit"] == 10
     assert spec["subsets"] == ["simple_python", "parallel", "irrelevance"]
+    assert spec["batch_size"] == 1
+    assert spec["sdk_max_retries"] == 2
+    assert spec["request_timeout_seconds"] == 180
 
     timeout_context = context(
         tmp_path,

@@ -1,0 +1,17 @@
+schema_version: 1
+experiment_id: bfcl-throughput-smoke-25-v1
+description: Bounded 25-way concurrency validation for a slow deployment and BFCL.
+models: [deepseek-v4-pro]
+lanes: [standardized]
+output_root: runs
+benchmarks:
+  - benchmark_id: bfcl-v4
+    profile: smoke
+    trials: 1
+    options:
+      limit: 25
+      batch_size: 25
+      sdk_max_retries: 2
+      request_timeout_seconds: 180
+      temperature: 0
+      timeout_seconds: 1800

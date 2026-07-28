@@ -27,10 +27,18 @@ class CatalogTests(unittest.TestCase):
                 ],
             )
 
-    def test_release_experiment_selects_all_models_and_three_trials(self) -> None:
+    def test_release_experiment_uses_official_bfcl_single_run(self) -> None:
         experiment = load_experiment()
         self.assertEqual(experiment.models, ["*"])
-        self.assertEqual({item.trials for item in experiment.benchmarks}, {3})
+        trials = {item.benchmark_id: item.trials for item in experiment.benchmarks}
+        self.assertEqual(
+            trials,
+            {
+                "probe": 3,
+                "bfcl-v4": 1,
+                "toolathlon-verified": 3,
+            },
+        )
 
     def test_duplicate_alias_is_rejected(self) -> None:
         source = Path("config/models.yaml").read_text(encoding="utf-8")

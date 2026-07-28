@@ -40,6 +40,17 @@ uv run tooluse-bench run \
 The smoke uses one deployment, one trial, three subsets, and a limit of three.
 It is a harness validation artifact, not a publishable model score.
 
+Before changing release concurrency, run the bounded slow-deployment profile:
+
+```bash
+uv run tooluse-bench run \
+  --experiment config/experiments/bfcl-throughput-smoke.yaml
+```
+
+It uses three subsets, 25 samples per subset, and 25 concurrent requests.
+Its only purpose is validating capacity and failure isolation; it is not a
+publishable model score.
+
 Then execute the complete plan:
 
 ```bash
@@ -67,8 +78,16 @@ the diagnostic gate. Real deadline-bound requests run in a clean spawned worker
 that the parent can terminate; credentials remain in process memory and never
 enter the command line. The release plan explicitly records a 90-second
 inactivity timeout, a 60-second wall deadline, no retry, and a 4,096-token cap
-for each protocol-probe request. BFCL and Toolathlon each record a six-hour
-benchmark-process ceiling; BFCL fsyncs every completed subset before continuing.
+for each protocol-probe request. BFCL records a twelve-hour benchmark-process
+ceiling and Toolathlon records a six-hour ceiling; BFCL fsyncs every completed
+subset before continuing.
+
+BFCL formal runs also record `batch_size`, `request_timeout_seconds`, and
+`sdk_max_retries` (capped at two). These are passed to EvalScope and its
+OpenAI-compatible client. SDK retries apply only to transport/status failures,
+not to incorrect model content. The official-comparison BFCL result is one full
+run, matching leaderboard practice; repeatability is measured separately
+instead of changing the primary score into an unofficial three-run mean.
 
 ## Report and publish
 
@@ -93,5 +112,5 @@ Use the release's Git commit and frozen lock files. Recreate the environment,
 use an equivalent deployment only if its precision and serving configuration
 are documented, rerun the experiment, and compare per-task records before
 aggregate metrics. Byte-identical scores are not expected from stochastic
-models; the three-trial reliability metrics and uncertainty should guide the
-comparison.
+models; the separately reported reliability metrics and uncertainty should
+guide the comparison.

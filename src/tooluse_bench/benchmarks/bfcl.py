@@ -82,6 +82,42 @@ class BFCLAdapter(BenchmarkAdapter):
         self, selection: BenchmarkSelection, deployment: ModelDeployment
     ) -> tuple[ValidationIssue, ...]:
         issues = list(super().validate(selection, deployment))
+        for option, default, minimum, maximum in (
+            ("batch_size", 1, 1, None),
+            ("sdk_max_retries", 2, 0, 2),
+        ):
+            value = selection.options.get(option, default)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < minimum
+                or (maximum is not None and value > maximum)
+            ):
+                range_text = (
+                    f"between {minimum} and {maximum}"
+                    if maximum is not None
+                    else f"at least {minimum}"
+                )
+                issues.append(
+                    ValidationIssue(
+                        level="error",
+                        code=f"invalid_{option}",
+                        message=f"{option} must be an integer {range_text}",
+                    )
+                )
+        request_timeout = selection.options.get("request_timeout_seconds", 180)
+        if (
+            isinstance(request_timeout, bool)
+            or not isinstance(request_timeout, int | float)
+            or request_timeout <= 0
+        ):
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    code="invalid_request_timeout_seconds",
+                    message="request_timeout_seconds must be a positive number",
+                )
+            )
         if selection.profile == "full-public" and not os.getenv("SERPAPI_API_KEY"):
             issues.append(
                 ValidationIssue(
@@ -106,6 +142,10 @@ class BFCLAdapter(BenchmarkAdapter):
             "model_id": context.deployment.model_id,
             "subsets": list(PROFILE_SUBSETS[context.selection.profile]),
             "batch_size": int(context.selection.options.get("batch_size", 1)),
+            "sdk_max_retries": int(context.selection.options.get("sdk_max_retries", 2)),
+            "request_timeout_seconds": float(
+                context.selection.options.get("request_timeout_seconds", 180)
+            ),
             "limit": limit,
             "generation_config": {
                 "temperature": float(context.selection.options.get("temperature", 0)),

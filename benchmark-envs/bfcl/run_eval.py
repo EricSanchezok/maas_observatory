@@ -34,6 +34,7 @@ def _task_config(
         model=spec["model_id"],
         api_url=api_url,
         api_key=api_key,
+        model_args={"max_retries": spec["sdk_max_retries"]},
         eval_type="openai_api",
         datasets=["bfcl_v4"],
         eval_batch_size=spec["batch_size"],
@@ -43,7 +44,10 @@ def _task_config(
                 "extra_params": extra_params,
             }
         },
-        generation_config=spec["generation_config"],
+        generation_config={
+            **spec["generation_config"],
+            "timeout": spec["request_timeout_seconds"],
+        },
         use_cache=str(subset_root / "cache"),
         limit=spec.get("limit"),
     )

@@ -36,6 +36,26 @@ def test_bfcl_warns_when_full_profile_lacks_serpapi() -> None:
     assert issues[0].level == "warning"
 
 
+def test_bfcl_rejects_invalid_resource_and_retry_options() -> None:
+    selection = BenchmarkSelection(
+        benchmark_id="bfcl-v4",
+        profile="smoke",
+        trials=1,
+        options={
+            "batch_size": 0,
+            "sdk_max_retries": 3,
+            "request_timeout_seconds": 0,
+        },
+    )
+    issues = BFCLAdapter().validate(selection, load_catalog()[0])
+    assert {issue.code for issue in issues} == {
+        "invalid_batch_size",
+        "invalid_sdk_max_retries",
+        "invalid_request_timeout_seconds",
+    }
+    assert all(issue.level == "error" for issue in issues)
+
+
 def test_toolathlon_self_hosted_backend_requires_server() -> None:
     selection = BenchmarkSelection(
         benchmark_id="toolathlon-verified",
