@@ -45,6 +45,8 @@ def test_bfcl_rejects_invalid_resource_and_retry_options() -> None:
             "batch_size": 0,
             "sdk_max_retries": 3,
             "request_timeout_seconds": 0,
+            "transport_circuit_breaker_min_samples": 0,
+            "transport_circuit_breaker_error_fraction": 1.1,
         },
     )
     issues = BFCLAdapter().validate(selection, load_catalog()[0])
@@ -52,6 +54,8 @@ def test_bfcl_rejects_invalid_resource_and_retry_options() -> None:
         "invalid_batch_size",
         "invalid_sdk_max_retries",
         "invalid_request_timeout_seconds",
+        "invalid_transport_circuit_breaker_min_samples",
+        "invalid_transport_circuit_breaker_error_fraction",
     }
     assert all(issue.level == "error" for issue in issues)
 

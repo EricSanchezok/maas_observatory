@@ -19,10 +19,12 @@ benchmarks:
     options:
       backend: evalscope
       batch_size: 25
-      sdk_max_retries: 2
-      request_timeout_seconds: 180
+      sdk_max_retries: 0
+      request_timeout_seconds: 90
+      transport_circuit_breaker_min_samples: 50
+      transport_circuit_breaker_error_fraction: 0.95
       temperature: 0
-      timeout_seconds: 172800
+      timeout_seconds: 43200
   - benchmark_id: toolathlon-verified
     profile: official
     trials: 3

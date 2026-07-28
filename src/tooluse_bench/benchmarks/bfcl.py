@@ -140,6 +140,41 @@ class BFCLAdapter(BenchmarkAdapter):
                     message="request_timeout_seconds must be a positive number",
                 )
             )
+        circuit_minimum = selection.options.get(
+            "transport_circuit_breaker_min_samples", 50
+        )
+        if (
+            isinstance(circuit_minimum, bool)
+            or not isinstance(circuit_minimum, int)
+            or circuit_minimum < 1
+        ):
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    code="invalid_transport_circuit_breaker_min_samples",
+                    message=(
+                        "transport_circuit_breaker_min_samples must be an integer "
+                        "of at least 1"
+                    ),
+                )
+            )
+        circuit_fraction = selection.options.get(
+            "transport_circuit_breaker_error_fraction", 0.95
+        )
+        if (
+            isinstance(circuit_fraction, bool)
+            or not isinstance(circuit_fraction, int | float)
+            or not 0 < float(circuit_fraction) <= 1
+        ):
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    code="invalid_transport_circuit_breaker_error_fraction",
+                    message=(
+                        "transport_circuit_breaker_error_fraction must be in (0, 1]"
+                    ),
+                )
+            )
         if selection.profile == "full-public" and not os.getenv("SERPAPI_API_KEY"):
             issues.append(
                 ValidationIssue(
@@ -165,12 +200,24 @@ class BFCLAdapter(BenchmarkAdapter):
         request_timeout_seconds = float(
             context.selection.options.get("request_timeout_seconds", 180)
         )
+        circuit_breaker_min_samples = int(
+            context.selection.options.get("transport_circuit_breaker_min_samples", 50)
+        )
+        circuit_breaker_error_fraction = float(
+            context.selection.options.get(
+                "transport_circuit_breaker_error_fraction", 0.95
+            )
+        )
         spec = {
             "model_id": context.deployment.model_id,
             "subsets": list(PROFILE_SUBSETS[context.selection.profile]),
             "batch_size": batch_size,
             "sdk_max_retries": sdk_max_retries,
             "request_timeout_seconds": request_timeout_seconds,
+            "transport_circuit_breaker_min_samples": circuit_breaker_min_samples,
+            "transport_circuit_breaker_error_fraction": (
+                circuit_breaker_error_fraction
+            ),
             "limit": limit,
             "generation_config": {
                 "temperature": float(context.selection.options.get("temperature", 0)),
@@ -211,6 +258,12 @@ class BFCLAdapter(BenchmarkAdapter):
         )
         finished_at = datetime.now(UTC)
         stderr_text = outcome.stderr_path.read_text(encoding="utf-8", errors="replace")
+        summary_path = output_root / "adapter-summary.json"
+        adapter_summary = (
+            json.loads(summary_path.read_text(encoding="utf-8"))
+            if summary_path.exists()
+            else None
+        )
         audit_path = context.workspace / "execution-audit.json"
         audit = ExecutionAudit(
             run_id=context.spec.run_id,
@@ -225,12 +278,21 @@ class BFCLAdapter(BenchmarkAdapter):
                 "request_timeout_seconds": request_timeout_seconds,
                 "sdk_max_retries": sdk_max_retries,
                 "process_timeout_seconds": process_timeout_seconds,
+                "transport_circuit_breaker_error_fraction": (
+                    circuit_breaker_error_fraction
+                ),
+                "transport_circuit_breaker_min_samples": (circuit_breaker_min_samples),
             },
             observations={
                 "process_return_code": outcome.return_code,
                 "process_wall_seconds": outcome.wall_seconds,
                 "observed_sdk_retry_log_count": stderr_text.count("Retrying request"),
                 "upstream_unbounded_rate_limit_retry_disabled": True,
+                "transport_circuit_breaker": (
+                    adapter_summary.get("circuit_breaker")
+                    if isinstance(adapter_summary, dict)
+                    else None
+                ),
             },
         )
         audit_path.write_text(

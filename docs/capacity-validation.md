@@ -36,3 +36,11 @@ ten-way development diagnostic, effective throughput improved by about 72%,
 but the observed long tail means a simple linear full-run time estimate is only
 a lower-bound capacity check. Multi-turn, memory, and web-search tasks can
 require additional model or tool interactions.
+
+An unpublished end-to-end audit run later demonstrated a different failure
+mode: a deployment became unreachable after several completed subsets, and the
+48-hour per-model ceiling permitted thousands of redundant transport attempts.
+Before the public run, the protocol was therefore frozen at a 90-second request
+timeout, zero SDK retries, and a 12-hour process ceiling. It also gained the
+predeclared 50-sample/95%-transport-error circuit breaker described in the
+methodology. This operational audit is not used as a model score.

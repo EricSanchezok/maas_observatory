@@ -79,6 +79,13 @@ Transport retries are limited to 429 responses, server errors, timeouts, and
 transport exceptions. Content or protocol failures are not retried. All failed
 and not-run observations remain in the trajectory file.
 
+For the formal BFCL plan, SDK retries are disabled and requests have a
+90-second timeout. A predeclared endpoint-health circuit opens when a completed
+subset contains at least 50 samples and at least 95% are transport or timeout
+errors. Remaining subsets are marked unscored infrastructure skips. The rule
+never opens on model-scored failures, so it cannot improve a model's capability
+score by hiding incorrect tool calls.
+
 ## Error taxonomy
 
 Errors are categorized as transport, protocol, selection, arguments, planning,

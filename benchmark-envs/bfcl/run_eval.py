@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from circuit_breaker import should_open_transport_circuit
 from evalscope import TaskConfig, run_task
 from normalize import normalize_outputs
 
@@ -106,8 +107,14 @@ def main() -> int:
     previous_directory = Path.cwd()
     completed_subsets: list[str] = []
     failed_subsets: list[str] = []
+    skipped_subsets: list[str] = []
     normalized_result_count = 0
-    for subset in spec["subsets"]:
+    circuit_breaker: dict[str, Any] = {
+        "opened": False,
+        "minimum_samples": spec["transport_circuit_breaker_min_samples"],
+        "failure_fraction": spec["transport_circuit_breaker_error_fraction"],
+    }
+    for subset_index, subset in enumerate(spec["subsets"]):
         subset_root = output_root / "subsets" / subset
         subset_root.mkdir(parents=True, exist_ok=True)
         task = _task_config(spec, subset=subset, subset_root=subset_root)
@@ -139,13 +146,46 @@ def main() -> int:
                     (subset_root / result["source_path"]).relative_to(output_root)
                 )
             _append_jsonl(result_path, results)
+            should_open, failure_summary = should_open_transport_circuit(
+                results,
+                minimum_samples=spec["transport_circuit_breaker_min_samples"],
+                failure_fraction=spec["transport_circuit_breaker_error_fraction"],
+            )
+            if should_open:
+                skipped_subsets = list(spec["subsets"][subset_index + 1 :])
+                circuit_breaker.update(
+                    {
+                        "opened": True,
+                        "trigger_subset": subset,
+                        **failure_summary,
+                    }
+                )
+                _append_jsonl(
+                    error_path,
+                    [
+                        {
+                            "subset": skipped_subset,
+                            "error_type": "TransportCircuitBreakerOpen",
+                            "error_detail": (
+                                "Skipped after endpoint transport/timeout failures "
+                                f"reached {failure_summary['transport_failure_count']}/"
+                                f"{failure_summary['sample_count']} in {subset}; "
+                                "no capability score was assigned"
+                            ),
+                        }
+                        for skipped_subset in skipped_subsets
+                    ],
+                )
+                break
         finally:
             os.chdir(previous_directory)
 
     summary = {
+        "circuit_breaker": circuit_breaker,
         "completed_subsets": completed_subsets,
         "failed_subsets": failed_subsets,
         "normalized_result_count": normalized_result_count,
+        "skipped_subsets": skipped_subsets,
         "subsets": spec["subsets"],
     }
     (output_root / "adapter-summary.json").write_text(

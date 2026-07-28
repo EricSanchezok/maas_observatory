@@ -27,7 +27,9 @@ jobs:
           uv run ruff format --check src tests scripts benchmark-envs/*/*.py
           uv run ruff check src tests scripts benchmark-envs/*/*.py
       - name: Check types
-        run: uv run mypy src benchmark-envs/bfcl/normalize.py
+        run: >
+          uv run mypy src benchmark-envs/bfcl/normalize.py
+          benchmark-envs/bfcl/circuit_breaker.py
       - name: Check schemas
         run: uv run python scripts/check_schemas.py
       - name: Validate public result snapshots

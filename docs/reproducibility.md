@@ -78,9 +78,10 @@ the diagnostic gate. Real deadline-bound requests run in a clean spawned worker
 that the parent can terminate; credentials remain in process memory and never
 enter the command line. The release plan explicitly records a 90-second
 inactivity timeout, a 60-second wall deadline, no retry, and a 4,096-token cap
-for each protocol-probe request. BFCL records a 48-hour benchmark-process
-ceiling and Toolathlon records a six-hour ceiling; BFCL fsyncs every completed
-subset before continuing.
+for each protocol-probe request. The formal BFCL plan uses a 90-second request
+timeout without SDK retry and records a 12-hour benchmark-process ceiling;
+Toolathlon records a six-hour ceiling. BFCL fsyncs every completed subset before
+continuing.
 
 BFCL formal runs also record `batch_size`, `request_timeout_seconds`, and
 `sdk_max_retries` (capped at two). These are passed to EvalScope and its
@@ -92,6 +93,14 @@ review records are normalized as transport, timeout, or infrastructure errors,
 never as capability failures. The official-comparison BFCL result is one full
 run, matching leaderboard practice; repeatability is measured separately
 instead of changing the primary score into an unofficial three-run mean.
+
+The formal BFCL plan also declares a transport circuit breaker before
+execution. After any completed subset of at least 50 samples has at least 95%
+transport or timeout errors, the remaining subsets are explicitly recorded as
+infrastructure skips with no capability score. This avoids turning a sustained
+endpoint outage into thousands of redundant requests while preserving the
+triggering subset, thresholds, skipped subset identities, and raw evidence in
+the execution audit.
 
 ## Report and publish
 
