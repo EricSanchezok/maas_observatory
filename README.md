@@ -3,10 +3,12 @@
 [![License: Apache-2.0](https://img.shields.io/badge/code-Apache--2.0-blue.svg)](LICENSE)
 [![Data: CC BY 4.0](https://img.shields.io/badge/data-CC%20BY%204.0-lightgrey.svg)](LICENSE-DATA)
 
-An open, reproducible repository for observing OpenAI-compatible MaaS
-deployments and evaluating tool use. The real-time `maas_observatory` service
-and the offline `tooluse_bench` runner are independent applications; they share
-only the validated model catalog and neutral configuration primitives.
+An open, reproducible repository for checking OpenAI-compatible MaaS responses
+and evaluating tool use. The real-time `maas_observatory` service uses
+lightweight route checks and real streaming requests; it does not publish
+serving-engine metrics. The offline `tooluse_bench` runner is an independent
+application. They share only the validated model catalog and neutral
+configuration primitives.
 
 > Project status: the harness and release pipeline are under active validation.
 > No public model score is claimed until a signed-off release bundle is linked
@@ -34,6 +36,12 @@ Open `http://127.0.0.1:8080/`. FastAPI serves the compiled interface and the
 read-only API from the same origin. For interface development, run
 `npm --prefix frontend run dev`; Vite listens on port 5173 and proxies API
 requests to port 8080.
+
+Collection defaults to `standard`. Set
+`MAAS_OBSERVATORY_COLLECTION_MODE=rapid` only for an attended session; Rapid
+has no automatic request cap and must be switched back manually. See the
+[operations guide](docs/maas-observatory-operations.md) for the exact request
+schedule, measurement formulas, schema v3 migration, and public API.
 
 ## Scope
 

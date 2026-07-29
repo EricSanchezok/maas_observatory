@@ -15,7 +15,7 @@ export function comparisonStatusCounts(
   const counts = new Map<string, number>();
   for (const item of items) {
     if (item.value !== null) continue;
-    const reason = item.latest_attempt_reason ?? "awaiting_turn";
+    const reason = item.latest_attempt_reason ?? "first_check_scheduled";
     counts.set(reason, (counts.get(reason) ?? 0) + 1);
   }
   return [...counts.entries()].sort(

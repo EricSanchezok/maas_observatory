@@ -1,4 +1,4 @@
-"""Public, read-only FastAPI contract."""
+"""Public, read-only FastAPI contract for real-request measurements."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,10 +19,10 @@ from fastapi.staticfiles import StaticFiles
 from maas_common.catalog import ModelCatalog
 from maas_observatory.database import Database, isoformat
 from maas_observatory.models import ApiEnvelope
+from maas_observatory.probes import LONG_SEEDS, SHORT_TEMPLATES
 from maas_observatory.settings import ObservatorySettings
 
 Window = Literal["1h", "6h", "24h", "7d", "30d"]
-Resolution = Literal["15s", "1m", "5m", "1h"]
 WINDOW_SECONDS = {
     "1h": 3600,
     "6h": 21600,
@@ -30,76 +30,13 @@ WINDOW_SECONDS = {
     "7d": 604800,
     "30d": 2592000,
 }
-MAX_WINDOW = {"15s": "24h", "1m": "30d", "5m": "365d", "1h": "365d"}
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 class RuntimeHealth:
     def __init__(self) -> None:
         self.ready = False
         self.detail = "starting"
-
-
-PublicQuality = Literal["exact", "incomplete", "unavailable"]
-
-PUBLIC_PROBE_REASONS = {
-    "requests_running": "busy",
-    "requests_waiting": "busy",
-    "kv_cache": "busy",
-    "telemetry_not_fresh": "telemetry_pending",
-    "telemetry_unavailable": "telemetry_pending",
-    "recent_production_requests": "recently_active",
-    "recent_success": "recently_active",
-    "insufficient_idle_history": "recently_active",
-    "daily_inference_budget": "budget_deferred",
-    "daily_output_token_budget": "budget_deferred",
-    "daily_speed_budget": "budget_deferred",
-    "daily_short_budget": "budget_deferred",
-    "daily_context_budget": "budget_deferred",
-    "daily_experience_budget": "budget_deferred",
-    "daily_input_token_budget": "budget_deferred",
-    "recent_preemption": "busy",
-    "minimum_interval": "scheduled_interval",
-    "maintenance": "maintenance",
-}
-
-
-def _public_probe_reason(outcome: str | None, error_code: str | None) -> str | None:
-    if outcome is None:
-        return "awaiting_turn"
-    if outcome == "success":
-        return None
-    if error_code in PUBLIC_PROBE_REASONS:
-        return PUBLIC_PROBE_REASONS[error_code]
-    if outcome == "skipped":
-        return "deferred"
-    return "attempt_failed"
-
-
-def _quality(sample_count: int, freshness: float | None) -> PublicQuality:
-    if sample_count == 0:
-        return "unavailable"
-    if freshness is None or freshness > 60:
-        return "incomplete"
-    return "exact"
-
-
-def _envelope(
-    *,
-    window: str,
-    freshness: float | None,
-    sample_count: int,
-    source_mix: dict[str, int],
-    data: Any,
-) -> dict[str, Any]:
-    return ApiEnvelope(
-        data_window=window,
-        freshness_seconds=freshness,
-        sample_count=sample_count,
-        source_mix=source_mix,
-        quality=_quality(sample_count, freshness),
-        data=data,
-    ).model_dump(mode="json")
 
 
 def _freshness(timestamp: str | None) -> float | None:
@@ -123,6 +60,63 @@ def _percentile(values: list[float], quantile: float) -> float | None:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower)
 
 
+def _envelope(
+    *,
+    window: str,
+    freshness: float | None,
+    sample_count: int,
+    source_mix: dict[str, int],
+    data: Any,
+    quality: Literal["exact", "incomplete", "unavailable"] | None = None,
+) -> dict[str, Any]:
+    resolved_quality = quality
+    if resolved_quality is None:
+        resolved_quality = (
+            "unavailable"
+            if sample_count == 0
+            else ("incomplete" if freshness is None else "exact")
+        )
+    return ApiEnvelope(
+        data_window=window,
+        freshness_seconds=freshness,
+        sample_count=sample_count,
+        source_mix=source_mix,
+        quality=resolved_quality,
+        data=data,
+    ).model_dump(mode="json")
+
+
+def _attempt_reason(outcome: str | None, error_code: str | None) -> str | None:
+    if outcome is None:
+        return "first_check_scheduled"
+    if outcome == "success":
+        return None
+    if error_code == "maintenance":
+        return "maintenance"
+    if error_code and error_code.startswith("daily_"):
+        return "scheduled_later"
+    if outcome == "skipped":
+        return "scheduled_later"
+    return "request_failed"
+
+
+def _etag_document(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _etag_document(item)
+            for key, item in value.items()
+            if key
+            not in {
+                "generated_at",
+                "freshness_seconds",
+                "measurement_age_seconds",
+            }
+        }
+    if isinstance(value, list):
+        return [_etag_document(item) for item in value]
+    return value
+
+
 def create_app(
     database: Database,
     catalog: ModelCatalog,
@@ -133,7 +127,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="MaaS Observatory API",
-        version="1.0.0",
+        version="3.0.0",
         docs_url="/docs",
         redoc_url=None,
     )
@@ -152,183 +146,201 @@ def create_app(
         )
         deployments = await database.query(
             """
-            SELECT deployment_id, alias, display_name, precision
-            FROM deployments WHERE active=1 ORDER BY alias
+            SELECT d.deployment_id, d.alias, d.display_name, d.precision,
+                   s.response_state, s.reasons_json
+            FROM deployments d
+            LEFT JOIN current_states s USING(deployment_id)
+            WHERE d.active=1 ORDER BY d.alias
             """
         )
+        context = profile == settings.experience.context_profile_id
+        kind = "experience_context" if context else "experience_short"
+        expected_fixtures = {
+            item[0] for item in (LONG_SEEDS if context else SHORT_TEMPLATES)
+        }
         summaries: list[dict[str, Any]] = []
-        profile_kind = (
-            "experience_context"
-            if profile == settings.experience.context_profile_id
-            else "experience_short"
-        )
         for deployment in deployments:
             runs = await database.query(
                 """
-                SELECT finished_at, outcome, error_code, profile_id,
-                       definition_version, vantage_id, measurement_json
+                SELECT finished_at, outcome, error_class, error_code,
+                       profile_id, definition_version, suite_version,
+                       vantage_id, collection_mode, fixture_id, block_id,
+                       scheduler_lag_seconds, measurement_json
                 FROM probe_runs
                 WHERE deployment_id=? AND kind=? AND profile_id=?
-                  AND finished_at>=?
+                  AND definition_version=? AND suite_version=?
+                  AND collection_mode=? AND finished_at>=?
                 ORDER BY finished_at
                 """,
                 (
                     deployment["deployment_id"],
-                    profile_kind,
+                    kind,
                     profile,
+                    settings.experience.definition_version,
+                    settings.experience.suite_version,
+                    settings.collection_mode,
                     cutoff,
                 ),
             )
-            attempt_rows = await database.query(
-                """
-                SELECT finished_at, outcome, error_code
-                FROM probe_runs
-                WHERE deployment_id=? AND kind=?
-                ORDER BY finished_at DESC LIMIT 1
-                """,
-                (deployment["deployment_id"], profile_kind),
-            )
+            attempts = [row for row in runs if row["outcome"] != "skipped"]
             successful: list[tuple[dict[str, Any], dict[str, Any]]] = []
-            executed = [row for row in runs if row["outcome"] != "skipped"]
             for row in runs:
-                measurements = json.loads(row["measurement_json"])
+                measurement = json.loads(row["measurement_json"])
                 if (
                     row["outcome"] == "success"
-                    and measurements.get("client_ttft_seconds") is not None
-                    and measurements.get("client_e2e_seconds") is not None
+                    and measurement.get("first_response_seconds") is not None
+                    and measurement.get("total_time_seconds") is not None
                 ):
-                    successful.append((row, measurements))
-            latest_attempt = attempt_rows[0] if attempt_rows else None
+                    successful.append((row, measurement))
+            latest_attempt = runs[-1] if runs else None
             latest = successful[-1] if successful else None
+            fixtures = {row["fixture_id"] for row, _ in successful if row["fixture_id"]}
             sample_count = len(successful)
-            enough = sample_count >= 3
-            ttft = [float(item[1]["client_ttft_seconds"]) for item in successful]
-            tps = [
-                float(item[1]["steady_state_output_tps"])
-                for item in successful
-                if item[1].get("steady_state_output_tps") is not None
+            complete_suite = (
+                sample_count >= settings.experience.summary_min_samples
+                and expected_fixtures.issubset(fixtures)
+            )
+            first_response = [
+                float(measurement["first_response_seconds"])
+                for _, measurement in successful
             ]
-            e2e = [float(item[1]["client_e2e_seconds"]) for item in successful]
-            measured_at = latest[0]["finished_at"] if latest else None
-            age = _freshness(measured_at)
-            if measured_at is None:
-                freshness_state = "experience_collecting"
-            elif age is not None and age < settings.experience.short_fresh_seconds:
-                freshness_state = "experience_fresh"
-            elif (
-                age is not None and age < settings.experience.short_unavailable_seconds
-            ):
-                freshness_state = "experience_stale"
-            else:
-                freshness_state = "experience_unavailable"
-            latest_measurements = latest[1] if latest else {}
-            success_rate = (
-                sum(row["outcome"] == "success" for row in executed) / len(executed)
-                if executed
+            output_speed = [
+                float(measurement["output_speed_tps"])
+                for _, measurement in successful
+                if measurement.get("output_speed_tps") is not None
+            ]
+            total_time = [
+                float(measurement["total_time_seconds"])
+                for _, measurement in successful
+            ]
+            tails_ready = sample_count >= settings.experience.tail_quantile_min_samples
+            latest_payload = None
+            measured_at = None
+            if latest:
+                row, measurement = latest
+                measured_at = row["finished_at"]
+                latest_payload = {
+                    "measured_at": measured_at,
+                    "first_response_seconds": measurement["first_response_seconds"],
+                    "output_speed_tps": measurement.get("output_speed_tps"),
+                    "total_time_seconds": measurement["total_time_seconds"],
+                    "reported_prompt_tokens": measurement.get("reported_prompt_tokens"),
+                    "reported_completion_tokens": measurement.get(
+                        "reported_completion_tokens"
+                    ),
+                    "fixture_id": row["fixture_id"],
+                    "block_id": row["block_id"],
+                    "scheduler_lag_seconds": row["scheduler_lag_seconds"],
+                }
+            executed_count = len(attempts)
+            path_success = (
+                sum(row["outcome"] == "success" for row in attempts) / executed_count
+                if executed_count
                 else None
+            )
+            latest_attempt_at = (
+                latest_attempt["finished_at"] if latest_attempt else None
             )
             summaries.append(
                 {
-                    **deployment,
+                    "deployment_id": deployment["deployment_id"],
+                    "alias": deployment["alias"],
+                    "name": deployment["display_name"],
+                    "precision": deployment["precision"],
+                    "response_state": deployment["response_state"] or "collecting",
+                    "state_reasons": json.loads(deployment["reasons_json"] or "[]"),
                     "profile_id": profile,
-                    "definition_version": (
-                        latest[0]["definition_version"]
-                        if latest
-                        else settings.experience.definition_version
-                    ),
+                    "definition_version": settings.experience.definition_version,
+                    "suite_version": settings.experience.suite_version,
                     "vantage_id": settings.experience.vantage_id,
-                    "experience_state": freshness_state,
+                    "collection_mode": settings.collection_mode,
                     "sample_count": sample_count,
-                    "executed_count": len(executed),
-                    "path_success_rate": success_rate,
-                    "quality": (
-                        "exact" if enough else "incomplete" if latest else "unavailable"
+                    "fixture_count": len(fixtures),
+                    "complete_fixture_set": complete_suite,
+                    "path_success_rate": path_success,
+                    "first_response_p50": (
+                        _percentile(first_response, 0.5) if complete_suite else None
                     ),
-                    "reason": None if enough else "insufficient_samples",
-                    "ttft_p50": _percentile(ttft, 0.5) if enough else None,
-                    "ttft_p90": _percentile(ttft, 0.9) if enough else None,
-                    "streaming_tps_p50": _percentile(tps, 0.5) if enough else None,
-                    "streaming_tps_p10": _percentile(tps, 0.1) if enough else None,
-                    "e2e_p50": _percentile(e2e, 0.5) if enough else None,
-                    "e2e_p90": _percentile(e2e, 0.9) if enough else None,
-                    "latest": (
-                        {
-                            "measured_at": measured_at,
-                            "client_ttft_seconds": latest_measurements.get(
-                                "client_ttft_seconds"
-                            ),
-                            "first_visible_content_seconds": latest_measurements.get(
-                                "first_visible_content_seconds"
-                            ),
-                            "steady_state_output_tps": latest_measurements.get(
-                                "steady_state_output_tps"
-                            ),
-                            "client_e2e_seconds": latest_measurements.get(
-                                "client_e2e_seconds"
-                            ),
-                            "stream_event_gap_p95_seconds": latest_measurements.get(
-                                "stream_event_gap_p95_seconds"
-                            ),
-                            "reported_prompt_tokens": latest_measurements.get(
-                                "reported_prompt_tokens"
-                            ),
-                            "reported_completion_tokens": latest_measurements.get(
-                                "reported_completion_tokens"
-                            ),
-                        }
-                        if latest
+                    "first_response_p90": (
+                        _percentile(first_response, 0.9) if tails_ready else None
+                    ),
+                    "output_speed_p50": (
+                        _percentile(output_speed, 0.5)
+                        if complete_suite and output_speed
                         else None
                     ),
+                    "output_speed_p10": (
+                        _percentile(output_speed, 0.1)
+                        if tails_ready and output_speed
+                        else None
+                    ),
+                    "total_time_p50": (
+                        _percentile(total_time, 0.5) if complete_suite else None
+                    ),
+                    "total_time_p90": (
+                        _percentile(total_time, 0.9) if tails_ready else None
+                    ),
+                    "latest": latest_payload,
                     "latest_attempt_outcome": (
                         latest_attempt["outcome"] if latest_attempt else None
                     ),
-                    "latest_attempt_reason": _public_probe_reason(
+                    "latest_attempt_reason": _attempt_reason(
                         latest_attempt["outcome"] if latest_attempt else None,
                         latest_attempt["error_code"] if latest_attempt else None,
                     ),
-                    "latest_attempt_at": (
-                        latest_attempt["finished_at"] if latest_attempt else None
+                    "latest_attempt_at": latest_attempt_at,
+                    "measurement_age_seconds": _freshness(measured_at),
+                    "quality": (
+                        "exact"
+                        if complete_suite
+                        else ("incomplete" if sample_count else "unavailable")
                     ),
                 }
             )
         return summaries
 
     @app.middleware("http")
-    async def cache_headers(
+    async def cache_and_etag(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         response = await call_next(request)
-        if not request.url.path.startswith("/api/v1/"):
-            return response
-        body = b""
-        streaming_response: Any = response
-        async for chunk in streaming_response.body_iterator:
-            body += chunk
-        etag_body = body
-        try:
-            etag_payload = json.loads(body)
-            if isinstance(etag_payload, dict):
-                etag_payload.pop("generated_at", None)
-                etag_payload.pop("freshness_seconds", None)
-                etag_body = json.dumps(
-                    etag_payload, sort_keys=True, separators=(",", ":")
-                ).encode()
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
-        etag = f'"{hashlib.sha256(etag_body).hexdigest()}"'
-        headers = dict(response.headers)
-        headers["ETag"] = etag
-        headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
-        if request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers=headers)
-        if request.method == "HEAD":
+        if request.url.path.startswith("/api/v1/") and response.status_code == 200:
             body = b""
-        return Response(
-            content=body,
-            status_code=response.status_code,
-            headers=headers,
-            media_type=response.media_type,
-        )
+            body_iterator = cast(Any, response).body_iterator
+            async for chunk in body_iterator:
+                body += chunk
+            etag_body = body
+            try:
+                etag_document = json.loads(body)
+                if isinstance(etag_document, dict):
+                    etag_body = json.dumps(
+                        _etag_document(etag_document),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            etag = f'"{hashlib.sha256(etag_body).hexdigest()}"'
+            if request.headers.get("if-none-match") == etag:
+                return Response(
+                    status_code=304,
+                    headers={
+                        "ETag": etag,
+                        "Cache-Control": (
+                            "public, max-age=10, stale-while-revalidate=30"
+                        ),
+                    },
+                )
+            headers = dict(response.headers)
+            headers["ETag"] = etag
+            headers["Cache-Control"] = "public, max-age=10, stale-while-revalidate=30"
+            return Response(
+                content=body,
+                status_code=response.status_code,
+                headers=headers,
+                media_type=response.media_type,
+            )
+        return response
 
     @app.api_route("/healthz", methods=["GET", "HEAD"])
     async def healthz(request: Request) -> Response:
@@ -342,19 +354,15 @@ def create_app(
         if request.method == "HEAD":
             return Response(status_code=status)
         return JSONResponse(
-            {
-                "status": "ready" if health.ready else "not_ready",
-                "detail": health.detail,
-            },
-            status_code=status,
+            {"ready": health.ready, "detail": health.detail}, status_code=status
         )
 
     @app.api_route("/api/v1/catalog", methods=["GET", "HEAD"])
     async def public_catalog() -> dict[str, Any]:
         rows = await database.query(
             """
-            SELECT deployment_id, alias, display_name, provider, family,
-                   upstream_model, precision, model_id
+            SELECT deployment_id, alias, display_name AS name,
+                   provider, family, upstream_model, precision, model_id
             FROM deployments WHERE active=1 ORDER BY alias
             """
         )
@@ -366,118 +374,9 @@ def create_app(
             data=rows,
         )
 
-    @app.api_route("/api/v1/overview", methods=["GET", "HEAD"])
-    async def overview(
-        window: Annotated[Window, Query()] = "24h",
-    ) -> dict[str, Any]:
-        states = await database.query(
-            """
-            SELECT d.deployment_id, d.alias, d.display_name, d.family, d.precision,
-                   s.service_state, s.telemetry_state, s.reasons_json,
-                   s.telemetry_at, s.evaluated_at
-            FROM deployments d LEFT JOIN current_states s USING(deployment_id)
-            WHERE d.active=1 ORDER BY d.alias
-            """
-        )
-        data: list[dict[str, Any]] = []
-        freshness_values: list[float] = []
-        for row in states:
-            latest = await database.query(
-                """
-                SELECT payload_json, bucket_at, quality,
-                       expected_source_count, observed_source_count,
-                       source_seconds_coverage
-                FROM rollups
-                WHERE deployment_id=? AND resolution='1m'
-                  AND quality IN ('exact', 'incomplete')
-                ORDER BY bucket_at DESC LIMIT 1
-                """,
-                (row["deployment_id"],),
-            )
-            metrics = json.loads(latest[0]["payload_json"])["values"] if latest else {}
-            measured_at = latest[0]["bucket_at"] if latest else None
-            expected_sources = int(
-                await database.scalar(
-                    """
-                    SELECT COUNT(*) FROM metrics_sources
-                    WHERE deployment_id=? AND active=1
-                    """,
-                    (row["deployment_id"],),
-                )
-                or 0
-            )
-            freshness = _freshness(row["telemetry_at"])
-            if freshness is not None:
-                freshness_values.append(freshness)
-            error_rows = await database.query(
-                """
-                SELECT error_class, COUNT(*) AS count FROM (
-                    SELECT error_class FROM scrape_snapshots
-                    WHERE deployment_id=? AND observed_at>=?
-                      AND error_class!='none'
-                    UNION ALL
-                    SELECT error_class FROM probe_runs
-                    WHERE deployment_id=? AND finished_at>=?
-                      AND outcome='failed' AND error_class!='none'
-                ) GROUP BY error_class
-                """,
-                (
-                    row["deployment_id"],
-                    isoformat(datetime.now(UTC) - timedelta(hours=24)),
-                    row["deployment_id"],
-                    isoformat(datetime.now(UTC) - timedelta(hours=24)),
-                ),
-            )
-            error_counts = {
-                item["error_class"]: int(item["count"]) for item in error_rows
-            }
-            data.append(
-                {
-                    "deployment_id": row["deployment_id"],
-                    "alias": row["alias"],
-                    "name": row["display_name"],
-                    "family": row["family"],
-                    "precision": row["precision"],
-                    "service_state": row["service_state"] or "unknown",
-                    "telemetry_state": row["telemetry_state"] or "unavailable",
-                    "reasons": json.loads(row["reasons_json"] or "[]"),
-                    "telemetry_at": row["telemetry_at"],
-                    "measured_at": measured_at,
-                    "measurement_age_seconds": _freshness(measured_at),
-                    "source_coverage": (
-                        latest[0]["source_seconds_coverage"] if latest else None
-                    ),
-                    "expected_source_count": (
-                        latest[0]["expected_source_count"]
-                        if latest
-                        else expected_sources
-                    ),
-                    "observed_source_count": (
-                        latest[0]["observed_source_count"] if latest else 0
-                    ),
-                    "quality": latest[0]["quality"] if latest else "unavailable",
-                    "error_statistics_24h": {
-                        "service_failures": error_counts.get("service_error", 0),
-                        "transport_unconfirmed": error_counts.get("transport_error", 0),
-                        "measurement_errors": error_counts.get("measurement_error", 0),
-                    },
-                    "metrics": {
-                        key: metrics.get(key) for key in settings.public.metric_fields
-                    },
-                }
-            )
-        valid_telemetry = sum(item["quality"] != "unavailable" for item in data)
-        return _envelope(
-            window=window,
-            freshness=max(freshness_values) if freshness_values else None,
-            sample_count=valid_telemetry,
-            source_mix={"passive_metrics": valid_telemetry},
-            data=data,
-        )
-
     @app.api_route("/api/v1/experience/overview", methods=["GET", "HEAD"])
     async def public_experience_overview(
-        profile: Annotated[str, Query()] = "interactive-short-v1",
+        profile: Annotated[str, Query()] = "interactive-short-v2",
         window: Annotated[Window, Query()] = "24h",
     ) -> dict[str, Any]:
         allowed = {
@@ -485,7 +384,7 @@ def create_app(
             settings.experience.context_profile_id,
         }
         if profile not in allowed:
-            raise HTTPException(status_code=400, detail="unknown experience profile")
+            raise HTTPException(status_code=400, detail="unknown response profile")
         data = await experience_summary(profile=profile, window=window)
         newest = max(
             (
@@ -496,11 +395,17 @@ def create_app(
             default=None,
         )
         samples = sum(int(item["sample_count"]) for item in data)
+        complete = sum(bool(item["complete_fixture_set"]) for item in data)
         return _envelope(
             window=window,
             freshness=_freshness(newest),
             sample_count=samples,
-            source_mix={"observer_path": samples},
+            source_mix={"streaming_requests": samples},
+            quality=(
+                "exact"
+                if complete == len(data)
+                else ("incomplete" if samples else "unavailable")
+            ),
             data=data,
         )
 
@@ -519,11 +424,10 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown deployment")
         return _envelope(
             window="latest",
-            freshness=_freshness(
-                item["latest"]["measured_at"] if item["latest"] else None
-            ),
+            freshness=item["measurement_age_seconds"],
             sample_count=int(item["sample_count"]),
-            source_mix={"observer_path": int(item["sample_count"])},
+            source_mix={"streaming_requests": int(item["sample_count"])},
+            quality=item["quality"],
             data=item,
         )
 
@@ -533,14 +437,15 @@ def create_app(
     )
     async def experience_series(
         deployment_id: str,
-        profile: Annotated[str, Query()] = "interactive-short-v1",
+        profile: Annotated[str, Query()] = "interactive-short-v2",
         window: Annotated[Window, Query()] = "24h",
     ) -> dict[str, Any]:
-        if profile not in {
+        allowed = {
             settings.experience.short_profile_id,
             settings.experience.context_profile_id,
-        }:
-            raise HTTPException(status_code=400, detail="unknown experience profile")
+        }
+        if profile not in allowed:
+            raise HTTPException(status_code=400, detail="unknown response profile")
         exists = await database.scalar(
             "SELECT COUNT(*) FROM deployments WHERE deployment_id=? AND active=1",
             (deployment_id,),
@@ -554,15 +459,22 @@ def create_app(
         )
         rows = await database.query(
             """
-            SELECT finished_at, outcome, error_code, definition_version,
-                   vantage_id, measurement_json
-            FROM probe_runs WHERE deployment_id=? AND kind=? AND profile_id=?
-              AND finished_at>=? ORDER BY finished_at
+            SELECT finished_at, outcome, error_class, error_code,
+                   fixture_id, block_id, scheduler_lag_seconds,
+                   collection_mode, measurement_json
+            FROM probe_runs
+            WHERE deployment_id=? AND kind=? AND profile_id=?
+              AND definition_version=? AND suite_version=?
+              AND collection_mode=? AND finished_at>=?
+            ORDER BY finished_at
             """,
             (
                 deployment_id,
                 kind,
                 profile,
+                settings.experience.definition_version,
+                settings.experience.suite_version,
+                settings.collection_mode,
                 isoformat(
                     datetime.now(UTC) - timedelta(seconds=WINDOW_SECONDS[window])
                 ),
@@ -577,24 +489,29 @@ def create_app(
                     "quality": (
                         "exact" if row["outcome"] == "success" else "unavailable"
                     ),
-                    "reason": _public_probe_reason(row["outcome"], row["error_code"]),
+                    "reason": _attempt_reason(row["outcome"], row["error_code"]),
+                    "source_kind": "streaming_request",
+                    "observation_scope": "observatory_vantage",
                     "profile_id": profile,
-                    "definition_version": row["definition_version"],
-                    "vantage_id": row["vantage_id"],
-                    "source_kind": "experience_probe",
-                    "observation_scope": "observer_path",
+                    "definition_version": settings.experience.definition_version,
+                    "suite_version": settings.experience.suite_version,
+                    "vantage_id": settings.experience.vantage_id,
+                    "collection_mode": row["collection_mode"],
+                    "fixture_id": row["fixture_id"],
+                    "block_id": row["block_id"],
+                    "scheduler_lag_seconds": row["scheduler_lag_seconds"],
                     "sample_count": 1 if row["outcome"] == "success" else 0,
                     "measurements": {
                         key: measurements.get(key)
                         for key in (
                             "time_to_headers_seconds",
-                            "client_ttft_seconds",
-                            "first_visible_content_seconds",
-                            "steady_state_output_tps",
-                            "client_e2e_seconds",
-                            "stream_event_gap_p50_seconds",
-                            "stream_event_gap_p95_seconds",
-                            "stream_event_gap_max_seconds",
+                            "stream_start_seconds",
+                            "first_response_seconds",
+                            "output_speed_tps",
+                            "total_time_seconds",
+                            "stream_gap_p50_seconds",
+                            "stream_gap_p95_seconds",
+                            "stream_gap_max_seconds",
                             "reported_prompt_tokens",
                             "reported_completion_tokens",
                         )
@@ -605,7 +522,7 @@ def create_app(
             window=window,
             freshness=_freshness(points[-1]["timestamp"] if points else None),
             sample_count=sum(point["sample_count"] for point in points),
-            source_mix={"observer_path": len(points)},
+            source_mix={"streaming_requests": len(points)},
             data={
                 "deployment_id": deployment_id,
                 "profile_id": profile,
@@ -619,13 +536,15 @@ def create_app(
             """
             SELECT profile_id, definition_version, fixture_sha256,
                    definition_json
-            FROM experience_profiles ORDER BY profile_id
-            """
+            FROM experience_profiles
+            WHERE definition_version=?
+            ORDER BY profile_id
+            """,
+            (settings.experience.definition_version,),
         )
         data = []
         for row in rows:
             definition = json.loads(row.pop("definition_json"))
-            definition.pop("fixture_sha256", None)
             data.append({**row, **definition})
         return _envelope(
             window="current",
@@ -633,97 +552,6 @@ def create_app(
             sample_count=len(data),
             source_mix={"configuration": len(data)},
             data=data,
-        )
-
-    @app.api_route(
-        "/api/v1/deployments/{deployment_id}/series", methods=["GET", "HEAD"]
-    )
-    async def series(
-        deployment_id: str,
-        metric: Annotated[str, Query()] = "aggregate_output_tps",
-        window: Annotated[Window, Query()] = "24h",
-        resolution: Annotated[Resolution, Query()] = "1m",
-    ) -> dict[str, Any]:
-        exists = await database.scalar(
-            "SELECT COUNT(*) FROM deployments WHERE deployment_id=? AND active=1",
-            (deployment_id,),
-        )
-        if not exists:
-            raise HTTPException(status_code=404, detail="unknown deployment")
-        if metric not in settings.public.metric_fields:
-            raise HTTPException(status_code=400, detail="metric is not public")
-        window_seconds = WINDOW_SECONDS[window]
-        if resolution == "15s" and window_seconds > WINDOW_SECONDS["24h"]:
-            raise HTTPException(
-                status_code=400, detail="15s resolution supports at most 24h"
-            )
-        cutoff = isoformat(datetime.now(UTC) - timedelta(seconds=window_seconds))
-        points: list[dict[str, Any]] = []
-        if resolution == "15s":
-            rows = await database.query(
-                """
-                SELECT observed_at, interval_json FROM scrape_snapshots
-                WHERE deployment_id=? AND observed_at>=?
-                  AND interval_json IS NOT NULL ORDER BY observed_at
-                """,
-                (deployment_id, cutoff),
-            )
-            for row in rows:
-                interval = json.loads(row["interval_json"])
-                value = interval["values"].get(metric)
-                points.append(
-                    {
-                        "timestamp": row["observed_at"],
-                        "value": value,
-                        "unit": _metric_unit(metric),
-                        "source_kind": "passive_metrics",
-                        "observation_scope": "deployment",
-                        "quality": ("exact" if value is not None else "unavailable"),
-                        "sample_count": interval.get("sample_count", 0),
-                        "profile_id": None,
-                        "definition_version": "1",
-                        "reason": None if value is not None else "no_samples",
-                    }
-                )
-        else:
-            rows = await database.query(
-                """
-                SELECT bucket_at, payload_json, sample_count, quality
-                FROM rollups WHERE deployment_id=? AND resolution=?
-                  AND bucket_at>=? ORDER BY bucket_at
-                """,
-                (deployment_id, resolution, cutoff),
-            )
-            for row in rows:
-                payload = json.loads(row["payload_json"])
-                value = payload["values"].get(metric)
-                points.append(
-                    {
-                        "timestamp": row["bucket_at"],
-                        "value": value,
-                        "unit": _metric_unit(metric),
-                        "source_kind": "passive_metrics",
-                        "observation_scope": "deployment",
-                        "quality": ("exact" if value is not None else "unavailable"),
-                        "sample_count": row["sample_count"],
-                        "profile_id": None,
-                        "definition_version": "1",
-                        "reason": None if value is not None else "no_samples",
-                    }
-                )
-        newest = points[-1]["timestamp"] if points else None
-        return _envelope(
-            window=window,
-            freshness=_freshness(newest),
-            sample_count=sum(point["sample_count"] for point in points),
-            source_mix={"passive_metrics": len(points)},
-            data={
-                "deployment_id": deployment_id,
-                "metric": metric,
-                "resolution": resolution,
-                "points": points,
-                "reason": None if points else "no_data",
-            },
         )
 
     @app.api_route("/api/v1/compare", methods=["GET", "HEAD"])
@@ -738,22 +566,20 @@ def create_app(
                 "deployment_id": item["deployment_id"],
                 "alias": item["alias"],
                 "value": (
-                    item["streaming_tps_p50"]
-                    if item["streaming_tps_p50"] is not None
-                    else (
-                        item["latest"]["steady_state_output_tps"]
-                        if item["latest"]
-                        else None
-                    )
+                    item["output_speed_p50"] if item["complete_fixture_set"] else None
                 ),
                 "unit": "tokens/s",
-                "source_kind": "experience_probe",
-                "observation_scope": "observer_path",
+                "source_kind": "streaming_request",
+                "observation_scope": "observatory_vantage",
                 "quality": item["quality"],
                 "sample_count": item["sample_count"],
+                "fixture_count": item["fixture_count"],
+                "complete_fixture_set": item["complete_fixture_set"],
                 "profile_id": item["profile_id"],
                 "definition_version": item["definition_version"],
+                "suite_version": item["suite_version"],
                 "vantage_id": item["vantage_id"],
+                "collection_mode": item["collection_mode"],
                 "measured_at": (
                     item["latest"]["measured_at"] if item["latest"] else None
                 ),
@@ -762,9 +588,9 @@ def create_app(
                 "latest_attempt_at": item["latest_attempt_at"],
                 "reason": (
                     None
-                    if item["latest"]
-                    and item["latest"]["steady_state_output_tps"] is not None
-                    else "no_valid_experience_sample"
+                    if item["complete_fixture_set"]
+                    and item["output_speed_p50"] is not None
+                    else "waiting_for_complete_fixture_set"
                 ),
             }
             for item in summaries
@@ -782,7 +608,7 @@ def create_app(
             window=window,
             freshness=_freshness(newest),
             sample_count=total,
-            source_mix={"experience_probe": total},
+            source_mix={"streaming_requests": total},
             data=data,
         )
 
@@ -791,17 +617,21 @@ def create_app(
         window: Annotated[Window, Query()] = "24h",
         limit: Annotated[int, Query(ge=1, le=500)] = 100,
     ) -> dict[str, Any]:
-        cutoff = isoformat(
-            datetime.now(UTC) - timedelta(seconds=WINDOW_SECONDS[window])
-        )
         rows = await database.query(
             """
-            SELECT id, deployment_id, kind, severity, state, title,
-                   detail_json, started_at, ended_at
-            FROM events WHERE started_at>=?
-            ORDER BY started_at DESC LIMIT ?
+            SELECT e.id, e.deployment_id, d.alias, e.kind, e.severity,
+                   e.state, e.title, e.detail_json, e.started_at, e.ended_at
+            FROM events e JOIN deployments d USING(deployment_id)
+            WHERE e.started_at>=?
+              AND e.kind IN ('response_state', 'response_regression')
+            ORDER BY e.started_at DESC LIMIT ?
             """,
-            (cutoff, limit),
+            (
+                isoformat(
+                    datetime.now(UTC) - timedelta(seconds=WINDOW_SECONDS[window])
+                ),
+                limit,
+            ),
         )
         for row in rows:
             row["detail"] = json.loads(row.pop("detail_json"))
@@ -809,7 +639,7 @@ def create_app(
             window=window,
             freshness=_freshness(rows[0]["started_at"]) if rows else None,
             sample_count=len(rows),
-            source_mix={"state_engine": len(rows)},
+            source_mix={"response_state": len(rows)},
             data=rows,
         )
 
@@ -823,28 +653,33 @@ def create_app(
             data={
                 "api_schema_version": SCHEMA_VERSION,
                 "service": "MaaS Observatory",
-                "comparison_scope": "observer_path",
+                "collection_mode": settings.collection_mode,
+                "suite_version": settings.experience.suite_version,
                 "observer_vantage": settings.experience.vantage_id,
                 "windows": list(WINDOW_SECONDS),
-                "resolutions": ["15s", "1m", "5m", "1h"],
-                "resolution_limits": MAX_WINDOW,
-                "public_metrics": settings.public.metric_fields,
-                "metric_definitions": {
-                    "steady_state_output_tps": (
-                        "(reported_completion_tokens - 1) / "
-                        "(last_output_event - first_output_event)"
+                "schedule": {
+                    "route_seconds": settings.probes.route_interval_seconds,
+                    "rapid_block_seconds": (
+                        settings.probes.rapid_block_interval_seconds
                     ),
-                    "aggregate_output_tps": (
-                        "sum of per-instance generation token counter rates"
+                    "standard_short_seconds": (
+                        settings.probes.standard_short_interval_seconds
                     ),
-                    "client_ttft_seconds": (
-                        "observer request start to first non-empty content "
-                        "or reasoning event"
+                    "standard_context_seconds": (
+                        settings.probes.standard_context_interval_seconds
                     ),
+                    "global_inference_concurrency": 1,
+                    "rapid_automatic_limit": None,
                 },
-                "deprecated_fields": {
-                    "system_output_tps": "aggregate_output_tps",
-                    "observed_decode_tps": None,
+                "metric_definitions": {
+                    "first_response_seconds": (
+                        "request start to first non-empty visible content"
+                    ),
+                    "output_speed_tps": (
+                        "(reported completion tokens - 1) / "
+                        "(last output event - first output event)"
+                    ),
+                    "total_time_seconds": "request start to completed stream",
                 },
             },
         )
@@ -889,15 +724,3 @@ def create_app(
             )
 
     return app
-
-
-def _metric_unit(metric: str) -> str:
-    if metric.endswith("_tps"):
-        return "tokens/s"
-    if metric.endswith("_p50") or metric.endswith("_p95"):
-        return "s"
-    if metric == "kv_cache_usage":
-        return "ratio"
-    if metric.endswith("_rate"):
-        return "ratio"
-    return "requests"

@@ -1,4 +1,5 @@
-schema_version: 2
+schema_version: 3
+collection_mode: standard
 
 server:
   host: 0.0.0.0
@@ -9,81 +10,24 @@ storage:
   root: var/maas-observatory
   database: observatory.sqlite3
   writer_queue_size: 2048
-  raw_retention_days: 7
-  minute_retention_days: 30
-  five_minute_retention_days: 365
   probe_retention_days: 365
   daily_backups: 7
   weekly_backups: 4
 
-scrape:
-  interval_seconds: 15
-  timeout_seconds: 12
-  max_concurrency: 4
-  max_response_bytes: 8388608
-  metrics_path: /metrics
-  p95_min_samples: 20
-
-metrics_sources:
-  deepseek-v4-pro:
-    - source_id: instance-01
-      url_env: SII_HOLOS_DEEPSEEK_V4_PRO_METRICS_01_URL
-      api_key_env: SII_HOLOS_DEEPSEEK_V4_PRO_API_KEY
-  deepseek-v4-flash:
-    - source_id: instance-01
-      url_env: SII_HOLOS_DEEPSEEK_V4_FLASH_METRICS_01_URL
-      api_key_env: SII_HOLOS_DEEPSEEK_V4_FLASH_API_KEY
-  glm-5.2:
-    - source_id: instance-01
-      url_env: SII_HOLOS_GLM_5_2_METRICS_01_URL
-      api_key_env: SII_HOLOS_GLM_5_2_API_KEY
-  qwen3.6-27b:
-    - source_id: instance-01
-      url_env: SII_HOLOS_QWEN3_6_27B_METRICS_01_URL
-      api_key_env: SII_HOLOS_QWEN3_6_27B_API_KEY
-  kimi-k2.6:
-    - source_id: instance-01
-      url_env: SII_HOLOS_KIMI_K2_6_METRICS_01_URL
-      api_key_env: SII_HOLOS_KIMI_K2_6_API_KEY
-  minimax-m2.7:
-    - source_id: instance-01
-      url_env: SII_HOLOS_MINIMAX_M2_7_METRICS_01_URL
-      api_key_env: SII_HOLOS_MINIMAX_M2_7_API_KEY
-  mimo-v2.5-pro:
-    - source_id: instance-01
-      url_env: SII_HOLOS_MIMO_V2_5_PRO_METRICS_01_URL
-      api_key_env: SII_HOLOS_MIMO_V2_5_PRO_API_KEY
-  nex-n2-pro-w8a8:
-    - source_id: instance-01
-      url_env: SII_HOLOS_NEX_N2_PRO_W8A8_METRICS_01_URL
-      api_key_env: SII_HOLOS_NEX_N2_PRO_W8A8_API_KEY
-  nex-n2-pro-bf16:
-    - source_id: instance-01
-      url_env: SII_HOLOS_NEX_N2_PRO_BF16_METRICS_01_URL
-      api_key_env: SII_HOLOS_NEX_N2_PRO_BF16_API_KEY
-
 probes:
   route_interval_seconds: 60
-  canary_min_interval_seconds: 900
-  diagnostic_canary_after_seconds: 7200
-  short_min_interval_seconds: 1800
-  short_dispatch_interval_seconds: 90
-  context_min_interval_seconds: 21600
   confirmation_delay_seconds: 60
   stream_stall_seconds: 30
   canary_max_output_tokens: 8
   short_max_output_tokens: 64
   context_max_output_tokens: 128
-  short_kv_cache_limit: 0.70
-  context_kv_cache_limit: 0.50
-  telemetry_max_age_seconds: 45
-  daily_budget:
-    short_requests: 48
-    context_requests: 4
-    canary_requests: 96
-    experience_requests: 52
-    output_tokens: 3584
-    input_tokens: 25000
+  rapid_block_interval_seconds: 60
+  standard_short_interval_seconds: 600
+  standard_context_interval_seconds: 900
+  standard_budget:
+    short_requests: 144
+    context_requests: 96
+    output_tokens: 21504
 
 profiles:
   deepseek-v4-pro: thinking
@@ -98,35 +42,10 @@ profiles:
 
 experience:
   vantage_id: observatory-primary
-  short_profile_id: interactive-short-v1
-  context_profile_id: context-16k-v1
-  definition_version: "1"
-  short_fresh_seconds: 2700
-  short_stale_seconds: 5400
-  short_unavailable_seconds: 7200
+  suite_version: response-suite-v2
+  short_profile_id: interactive-short-v2
+  context_profile_id: context-16k-v2
+  definition_version: "2"
+  summary_min_samples: 3
+  tail_quantile_min_samples: 10
   baseline_min_samples: 20
-
-state:
-  telemetry_partial_seconds: 45
-  telemetry_stale_seconds: 60
-  telemetry_unavailable_seconds: 300
-  service_error_rate: 0.05
-  service_error_min_samples: 20
-  passive_baseline_buckets: 96
-  speed_baseline_samples: 20
-  ttft_slow_multiplier: 2.0
-  speed_slow_ratio: 0.70
-
-public:
-  metric_fields:
-    - aggregate_output_tps
-    - prompt_tps
-    - requests_running
-    - requests_waiting
-    - kv_cache_usage
-    - ttft_p50
-    - ttft_p95
-    - queue_p95
-    - prefill_p95
-    - decode_p95
-    - e2e_p95

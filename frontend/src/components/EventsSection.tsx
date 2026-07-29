@@ -4,74 +4,58 @@ import {
   WarningCircle
 } from "@phosphor-icons/react";
 import { formatDateTime } from "../lib/format";
-import type { ObservatoryEvent, OverviewItem } from "../types";
+import type { ObservatoryEvent } from "../types";
 import { Reveal, SectionHeading } from "./common";
-import { ErrorChart } from "./charts";
 
-export function EventsSection({
-  events,
-  models
-}: {
-  events: ObservatoryEvent[];
-  models: OverviewItem[];
-}) {
-  const recentEvents = events.slice(0, 6);
+export function EventsSection({ events }: { events: ObservatoryEvent[] }) {
+  const recentEvents = events.slice(0, 8);
 
   return (
     <Reveal>
       <section className="page-section events-section" id="events">
         <SectionHeading
-          index="04"
-          title="Events"
-          meta={`${recentEvents.length} recent state transitions`}
+          title="Recent activity"
+          meta={`${recentEvents.length} response changes in this window`}
         >
           <a className="text-link" href="/docs" target="_blank" rel="noreferrer">
-            API contract <ArrowUpRight size={15} />
+            Measurement API <ArrowUpRight size={15} />
           </a>
         </SectionHeading>
-        <div className="event-grid">
-          <article className="event-list">
-            <header>
-              <span>RECENT EVENTS</span>
-              <span>UTC+8</span>
-            </header>
-            {recentEvents.length > 0 ? (
-              recentEvents.map((event) => {
-                const model = models.find(
-                  (item) => item.deployment_id === event.deployment_id
-                );
-                return (
-                  <div className="event-row" key={event.id}>
-                    <span
-                      className={`event-icon severity-${event.severity}`}
-                      aria-hidden="true"
-                    >
-                      {event.severity === "info" ? (
-                        <CheckCircle size={18} />
-                      ) : (
-                        <WarningCircle size={18} />
-                      )}
-                    </span>
-                    <div>
-                      <strong>{event.title}</strong>
-                      <span>{model?.alias ?? event.deployment_id}</span>
-                    </div>
-                    <span className="event-state">{event.state}</span>
-                    <time dateTime={event.started_at}>
-                      {formatDateTime(event.started_at)}
-                    </time>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="event-empty">
-                <CheckCircle size={22} weight="light" />
-                <span>No state transitions in this window</span>
+        <article className="event-list event-list-wide">
+          <header>
+            <span>RESPONSE CHANGES</span>
+            <span>LOCAL TIME</span>
+          </header>
+          {recentEvents.length > 0 ? (
+            recentEvents.map((event) => (
+              <div className="event-row" key={event.id}>
+                <span
+                  className={`event-icon severity-${event.severity}`}
+                  aria-hidden="true"
+                >
+                  {event.severity === "info" ? (
+                    <CheckCircle size={18} />
+                  ) : (
+                    <WarningCircle size={18} />
+                  )}
+                </span>
+                <div>
+                  <strong>{event.title}</strong>
+                  <span>{event.alias}</span>
+                </div>
+                <span className="event-state">{event.state}</span>
+                <time dateTime={event.started_at}>
+                  {formatDateTime(event.started_at)}
+                </time>
               </div>
-            )}
-          </article>
-          <ErrorChart models={models} />
-        </div>
+            ))
+          ) : (
+            <div className="event-empty">
+              <CheckCircle size={22} weight="light" />
+              <span>No response changes in this window</span>
+            </div>
+          )}
+        </article>
       </section>
     </Reveal>
   );

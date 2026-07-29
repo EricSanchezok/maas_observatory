@@ -4,8 +4,10 @@
 
 > 本文保留广义技术调研、术语和测量边界。MaaS Observatory 实时数据采集、
 > 指标优先级、公开 API 和前端数据合同以
-> [MaaS Observatory 数据后端服务设计](observability-data-backend-design.md)
-> 为准。实时观测站不包含 Benchmark、受控容量实验或对应入口。
+> [MaaS Observatory operations](maas-observatory-operations.md) 为准。当前实现
+> 只使用 `/v1/models` 和 Observatory 节点发出的真实 streaming 请求，不采集
+> 本文研究的 `/metrics` 或 Prometheus 数据。相关 white-box 内容仅是未来获得
+> 稳定逐实例来源时的可选方案。实时观测站不包含 Benchmark、受控容量实验或对应入口。
 
 ## 范围
 

@@ -1,15 +1,14 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { ServiceState, WindowOption } from "../types";
+import type { ResponseState, WindowOption } from "../types";
 
 const WINDOWS: WindowOption[] = ["1h", "6h", "24h"];
-const STATE_LABELS: Record<ServiceState, string> = {
-  operational: "Operational",
-  slow: "Slow",
-  degraded: "Degraded",
+const STATE_LABELS: Record<ResponseState, string> = {
+  current: "Current",
+  collecting: "Checking",
+  delayed: "Delayed",
   unavailable: "Unavailable",
-  maintenance: "Maintenance",
-  unknown: "Unknown"
+  maintenance: "Maintenance"
 };
 
 export function Reveal({
@@ -60,31 +59,24 @@ export function BrandMark() {
 
 export function StatePill({
   state,
-  telemetry,
   compact = false
 }: {
-  state: ServiceState;
-  telemetry?: string;
+  state: ResponseState;
   compact?: boolean;
 }) {
   return (
     <span className={`state-pill state-${state} ${compact ? "is-compact" : ""}`}>
       <i aria-hidden="true" />
       {STATE_LABELS[state]}
-      {telemetry && !compact && (
-        <span className="state-telemetry">/ {telemetry}</span>
-      )}
     </span>
   );
 }
 
 export function SectionHeading({
-  index,
   title,
   meta,
   children
 }: {
-  index: string;
   title: string;
   meta?: string;
   children?: ReactNode;
@@ -92,7 +84,6 @@ export function SectionHeading({
   return (
     <div className="section-heading">
       <div className="section-heading-copy">
-        <span className="section-number">{index}</span>
         <h2>{title}</h2>
         {meta && <p>{meta}</p>}
       </div>
@@ -109,11 +100,12 @@ export function WindowControl({
   onChange: (value: WindowOption) => void;
 }) {
   return (
-    <div className="window-control" aria-label="Data window">
+    <div className="window-control" role="group" aria-label="Data window">
       {WINDOWS.map((window) => (
         <button
           type="button"
           className={value === window ? "active" : ""}
+          aria-pressed={value === window}
           key={window}
           onClick={() => onChange(window)}
         >

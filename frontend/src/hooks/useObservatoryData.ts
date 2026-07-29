@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchExperienceSeries, fetchOverview, fetchSeries } from "../api";
+import { fetchExperienceSeries, fetchOverview } from "../api";
 import type {
   CatalogItem,
   CompareItem,
@@ -7,18 +7,18 @@ import type {
   ExperienceItem,
   MetricSeries,
   ObservatoryEvent,
-  OverviewItem,
   WindowOption
 } from "../types";
 
 export interface DashboardData {
   catalog: Envelope<CatalogItem[]>;
-  overview: Envelope<OverviewItem[]>;
   compare: Envelope<CompareItem[]>;
   experience: Envelope<ExperienceItem[]>;
   contextExperience: Envelope<ExperienceItem[]>;
   events: Envelope<ObservatoryEvent[]>;
 }
+
+const EMPTY_SERIES: MetricSeries = {};
 
 export function useExperienceSeries(
   deploymentId: string,
@@ -39,13 +39,13 @@ export function useExperienceSeries(
         const [shortResult, contextResult] = await Promise.all([
           fetchExperienceSeries(
             deploymentId,
-            "interactive-short-v1",
+            "interactive-short-v2",
             dataWindow,
             controller.signal
           ),
           fetchExperienceSeries(
             deploymentId,
-            "context-16k-v1",
+            "context-16k-v2",
             dataWindow,
             controller.signal
           )
@@ -72,8 +72,6 @@ export function useExperienceSeries(
 
   return { shortSeries, contextSeries, loading };
 }
-
-const EMPTY_SERIES: MetricSeries = {};
 
 export function useObservatoryData(dataWindow: WindowOption) {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -108,39 +106,4 @@ export function useObservatoryData(dataWindow: WindowOption) {
   }, [dataWindow, reloadToken]);
 
   return { data, loading, error, refresh, reloadToken };
-}
-
-export function useDeploymentSeries(
-  deploymentId: string,
-  dataWindow: WindowOption,
-  reloadToken: number
-) {
-  const [series, setSeries] = useState<MetricSeries>(EMPTY_SERIES);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!deploymentId) return;
-    const controller = new AbortController();
-    let alive = true;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const result = await fetchSeries(deploymentId, dataWindow, controller.signal);
-        if (alive) setSeries(result);
-      } catch {
-        if (alive && !controller.signal.aborted) setSeries(EMPTY_SERIES);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    };
-    void load();
-    const timer = window.setInterval(load, 15_000);
-    return () => {
-      alive = false;
-      controller.abort();
-      window.clearInterval(timer);
-    };
-  }, [dataWindow, deploymentId, reloadToken]);
-
-  return { series, loading };
 }

@@ -1,7 +1,9 @@
 # MaaS Observatory
 
-这是一个面向 OpenAI-compatible MaaS 部署的实时观测与可复现工具调用评测项目。
-实时观测服务与离线评测 runner 相互独立，并分别记录：
+这是一个面向 OpenAI-compatible MaaS 部署的主动响应观测与可复现工具调用评测
+项目。实时观测服务只使用 `/v1/models` 轻量连通检查，以及从 Observatory 节点
+发出的真实 streaming 请求；不采集统计边界不明确的 serving metrics。实时观测
+服务与离线评测 runner 相互独立。离线评测分别记录：
 
 - endpoint、鉴权或超时等传输问题；
 - OpenAI `message.tool_calls` 协议不兼容；
@@ -24,6 +26,11 @@ uv run maas-observatory serve
 打开 `http://127.0.0.1:8080/`。生产模式下 FastAPI 同源提供前端与公开只读 API；
 开发前端时可另行运行 `npm --prefix frontend run dev`，Vite 会把 API 请求代理到
 8080 端口。
+
+仓库默认使用 `standard` 采集。`rapid` 模式每分钟为每个模型安排一次请求，短请求
+和长上下文交替执行，并且没有自动请求上限，只适合有人值守的采集阶段；使用后必须
+手动切回 Standard。准确的调度、指标公式、schema v3 迁移和 API 说明见
+[运行与维护](docs/maas-observatory-operations.md)。
 
 ## 快速开始
 

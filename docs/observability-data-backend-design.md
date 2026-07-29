@@ -1,8 +1,15 @@
-# MaaS Observatory 数据后端服务设计
+# MaaS Observatory 数据后端服务设计（历史研究）
 
-状态：设计稿
+状态：已被 schema v3 主动响应观测取代
 日期：2026-07-28
 范围：9 个 OpenAI-compatible 模型部署的实时与近实时服务观测
+
+> 本文保留为技术研究记录，不描述当前实现。当前服务不采集 `/metrics`、
+> Prometheus、counter、histogram 或被动 telemetry，也不公开服务端吞吐。
+> 当前权威实现和运行口径见
+> [MaaS Observatory operations](maas-observatory-operations.md)。只有未来能够获得
+> 稳定、逐实例且边界明确的数据源时，本文的 white-box 方案才可作为独立 adapter
+> 重新评估。
 
 ## 1. 决策摘要
 

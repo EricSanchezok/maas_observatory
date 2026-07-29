@@ -1,4 +1,4 @@
-"""Evidence-based service and telemetry state calculation."""
+"""Response state derived only from route and real generation checks."""
 
 from __future__ import annotations
 
@@ -11,103 +11,149 @@ from typing import Any
 
 from maas_common.catalog import ModelCatalog
 from maas_observatory.database import Database, isoformat
-from maas_observatory.models import ServiceState, TelemetryState
-from maas_observatory.settings import StateSettings
+from maas_observatory.models import ResponseState
+from maas_observatory.settings import ObservatorySettings
 
 
 class StateEngine:
     def __init__(
         self,
         catalog: ModelCatalog,
-        settings: StateSettings,
+        settings: ObservatorySettings,
         database: Database,
     ) -> None:
         self.catalog = catalog
         self.settings = settings
         self.database = database
 
-    def telemetry_state(self, observed_at: datetime | None) -> TelemetryState:
-        if observed_at is None:
-            return TelemetryState.UNAVAILABLE
-        age = (datetime.now(UTC) - observed_at).total_seconds()
-        if age > self.settings.telemetry_unavailable_seconds:
-            return TelemetryState.UNAVAILABLE
-        if age > self.settings.telemetry_stale_seconds:
-            return TelemetryState.STALE
-        if age > self.settings.telemetry_partial_seconds:
-            return TelemetryState.PARTIAL
-        return TelemetryState.FRESH
-
     async def evaluate(
         self, deployment_id: str
-    ) -> tuple[ServiceState, TelemetryState, list[str]]:
-        latest_rows = await self.database.query(
-            """
-            SELECT observed_at, quality, gauges_json, interval_json
-            FROM scrape_snapshots WHERE deployment_id=?
-            ORDER BY observed_at DESC LIMIT 3
-            """,
-            (deployment_id,),
-        )
-        latest_at = (
-            datetime.fromisoformat(latest_rows[0]["observed_at"])
-            if latest_rows
-            else None
-        )
-        telemetry = self.telemetry_state(latest_at)
-        if (
-            telemetry == TelemetryState.FRESH
-            and latest_rows
-            and latest_rows[0]["quality"] != "exact"
-        ):
-            telemetry = TelemetryState.PARTIAL
+    ) -> tuple[ResponseState, list[str], str | None, str | None]:
         current = await self.database.query(
-            "SELECT service_state FROM current_states WHERE deployment_id=?",
+            "SELECT response_state FROM current_states WHERE deployment_id=?",
             (deployment_id,),
         )
-        if current and current[0]["service_state"] == ServiceState.MAINTENANCE:
-            return ServiceState.MAINTENANCE, telemetry, ["maintenance"]
+        if current and current[0]["response_state"] == ResponseState.MAINTENANCE:
+            return ResponseState.MAINTENANCE, ["maintenance"], None, None
 
-        unavailable = await self._unavailable(deployment_id)
-        if unavailable:
-            return ServiceState.UNAVAILABLE, telemetry, [unavailable]
-        degraded = await self._degraded(deployment_id)
-        if degraded:
-            return ServiceState.DEGRADED, telemetry, [degraded]
-        slow = await self._slow(deployment_id, latest_rows)
-        if slow:
-            return ServiceState.SLOW, telemetry, [slow]
-        if (
-            telemetry == TelemetryState.FRESH
-            and latest_rows
-            and latest_rows[0]["quality"] == "exact"
-        ):
-            return ServiceState.OPERATIONAL, telemetry, ["fresh_telemetry"]
-        return ServiceState.UNKNOWN, telemetry, ["insufficient_fresh_evidence"]
-
-    async def _unavailable(self, deployment_id: str) -> str | None:
-        canaries = await self.database.query(
-            """
-            SELECT outcome, error_class FROM probe_runs
-            WHERE deployment_id=? AND kind IN ('canary', 'confirmation')
-              AND outcome!='skipped'
-            ORDER BY finished_at DESC LIMIT 2
-            """,
-            (deployment_id,),
-        )
-        if len(canaries) == 2 and all(
-            row["outcome"] == "failed" and row["error_class"] == "service_error"
-            for row in canaries
-        ):
-            return "consecutive_generation_service_failures"
         routes = await self.database.query(
             """
-            SELECT id, outcome FROM probe_runs
+            SELECT id, finished_at, outcome FROM probe_runs
             WHERE deployment_id=? AND kind='route'
             ORDER BY finished_at DESC LIMIT 3
             """,
             (deployment_id,),
         )
+        attempts = await self.database.query(
+            """
+            SELECT finished_at, outcome, error_class, error_code,
+                   scheduler_lag_seconds, measurement_json
+            FROM probe_runs
+            WHERE deployment_id=? AND kind='experience_short'
+              AND profile_id=? AND definition_version=?
+              AND suite_version=? AND collection_mode=?
+              AND outcome!='skipped'
+            ORDER BY finished_at DESC LIMIT 3
+            """,
+            (
+                deployment_id,
+                self.settings.experience.short_profile_id,
+                self.settings.experience.definition_version,
+                self.settings.experience.suite_version,
+                self.settings.collection_mode,
+            ),
+        )
+        last_route_at = routes[0]["finished_at"] if routes else None
+        last_response_at = attempts[0]["finished_at"] if attempts else None
+
+        if await self._unavailable(deployment_id, routes):
+            return (
+                ResponseState.UNAVAILABLE,
+                ["confirmed_request_failure"],
+                last_route_at,
+                last_response_at,
+            )
+        if not attempts:
+            return (
+                ResponseState.COLLECTING,
+                ["first_check_scheduled"],
+                last_route_at,
+                None,
+            )
+        latest = attempts[0]
+        if latest["outcome"] != "success":
+            return (
+                ResponseState.DELAYED,
+                ["latest_request_failed"],
+                last_route_at,
+                last_response_at,
+            )
+        allowed_lag = self.settings.interval_for(
+            self.settings.experience.short_profile_id
+        )
+        if (
+            latest["scheduler_lag_seconds"] is not None
+            and float(latest["scheduler_lag_seconds"]) > allowed_lag
+        ):
+            return (
+                ResponseState.DELAYED,
+                ["scheduler_delayed"],
+                last_route_at,
+                last_response_at,
+            )
+        route_current = bool(
+            routes
+            and routes[0]["outcome"] == "success"
+            and self._age(routes[0]["finished_at"])
+            <= self.settings.probes.route_interval_seconds * 2
+        )
+        response_current = (
+            self._age(latest["finished_at"])
+            <= self.settings.interval_for(self.settings.experience.short_profile_id) * 2
+        )
+        measurement = json.loads(latest["measurement_json"])
+        has_visible_response = measurement.get("first_response_seconds") is not None
+        if route_current and response_current and has_visible_response:
+            return (
+                ResponseState.CURRENT,
+                ["recent_route_and_response"],
+                last_route_at,
+                last_response_at,
+            )
+        reasons = []
+        if not route_current:
+            reasons.append("route_check_delayed")
+        if not response_current:
+            reasons.append("response_check_delayed")
+        if not has_visible_response:
+            reasons.append("visible_response_unavailable")
+        return ResponseState.DELAYED, reasons, last_route_at, last_response_at
+
+    @staticmethod
+    def _age(timestamp: str) -> float:
+        return max(
+            0,
+            (datetime.now(UTC) - datetime.fromisoformat(timestamp)).total_seconds(),
+        )
+
+    async def _unavailable(
+        self, deployment_id: str, routes: list[dict[str, Any]]
+    ) -> bool:
+        generations = await self.database.query(
+            """
+            SELECT outcome, error_class FROM probe_runs
+            WHERE deployment_id=?
+              AND kind IN ('experience_short', 'experience_context', 'confirmation')
+              AND outcome!='skipped'
+            ORDER BY finished_at DESC LIMIT 2
+            """,
+            (deployment_id,),
+        )
+        if len(generations) == 2 and all(
+            row["outcome"] == "failed" and row["error_class"] == "service_error"
+            for row in generations
+        ):
+            return True
         if len(routes) == 3 and all(row["outcome"] == "failed" for row in routes):
             confirmation = await self.database.query(
                 """
@@ -116,156 +162,87 @@ class StateEngine:
                 """,
                 (routes[0]["id"],),
             )
-            if confirmation and confirmation[0]["outcome"] == "failed":
-                return "route_and_generation_confirmation_failed"
-        return None
+            return bool(confirmation and confirmation[0]["outcome"] == "failed")
+        return False
 
-    async def _degraded(self, deployment_id: str) -> str | None:
-        cutoff = isoformat(datetime.now(UTC) - timedelta(minutes=5))
-        recent = await self.database.query(
-            """
-            SELECT outcome, error_class, error_code FROM probe_runs
-            WHERE deployment_id=? AND finished_at>=? AND outcome!='skipped'
-            """,
-            (deployment_id, cutoff),
-        )
-        service_errors = sum(
-            row["outcome"] == "failed" and row["error_class"] == "service_error"
-            for row in recent
-        )
-        if (
-            len(recent) >= self.settings.service_error_min_samples
-            and service_errors / len(recent) > self.settings.service_error_rate
-        ):
-            return "service_error_rate"
-        generations = await self.database.query(
-            """
-            SELECT error_code FROM probe_runs
-            WHERE deployment_id=? AND kind IN ('canary', 'speed', 'confirmation')
-              AND outcome!='skipped'
-            ORDER BY finished_at DESC LIMIT 2
-            """,
-            (deployment_id,),
-        )
-        degraded_codes = {"empty_output", "protocol_invalid", "stream_stall"}
-        if len(generations) == 2 and all(
-            row["error_code"] in degraded_codes for row in generations
-        ):
-            return "consecutive_invalid_generation"
-        return None
-
-    async def _slow(
-        self, deployment_id: str, latest_rows: list[dict[str, Any]]
-    ) -> str | None:
-        if len(latest_rows) == 3:
-            waiting = []
-            for row in latest_rows:
-                gauges = json.loads(row["gauges_json"])
-                waiting.append(float(gauges.get("requests_waiting") or 0))
-            if all(value > 0 for value in waiting):
-                return "persistent_waiting_queue"
-
-        passive = await self.database.query(
-            """
-            SELECT bucket_at, payload_json FROM rollups
-            WHERE deployment_id=? AND resolution='5m'
-              AND bucket_at>=?
-            ORDER BY bucket_at DESC
-            """,
-            (deployment_id, isoformat(datetime.now(UTC) - timedelta(days=7))),
-        )
-        baseline_ttft = [
-            float(value)
-            for row in passive
-            if (
-                value := json.loads(row["payload_json"])
-                .get("values", {})
-                .get("ttft_p95")
-            )
-            is not None
-        ]
-        if len(baseline_ttft) >= self.settings.passive_baseline_buckets:
-            recent_cutoff = datetime.now(UTC) - timedelta(minutes=10)
-            recent = [
-                float(value)
-                for row in passive
-                if datetime.fromisoformat(row["bucket_at"]) >= recent_cutoff
-                and (
-                    value := json.loads(row["payload_json"])
-                    .get("values", {})
-                    .get("ttft_p95")
-                )
-                is not None
-            ]
-            if len(recent) >= 2 and all(
-                value
-                > statistics.median(baseline_ttft) * self.settings.ttft_slow_multiplier
-                for value in recent[:2]
-            ):
-                return "ttft_above_baseline"
-
-        speed_rows = await self.database.query(
+    async def _regression(self, deployment_id: str) -> list[str]:
+        rows = await self.database.query(
             """
             SELECT measurement_json FROM probe_runs
-            WHERE deployment_id=? AND kind='speed' AND outcome='success'
-              AND finished_at>=?
+            WHERE deployment_id=? AND kind='experience_short'
+              AND profile_id=? AND definition_version=? AND suite_version=?
+              AND outcome='success' AND finished_at>=?
             ORDER BY finished_at DESC
             """,
-            (deployment_id, isoformat(datetime.now(UTC) - timedelta(days=7))),
+            (
+                deployment_id,
+                self.settings.experience.short_profile_id,
+                self.settings.experience.definition_version,
+                self.settings.experience.suite_version,
+                isoformat(datetime.now(UTC) - timedelta(days=7)),
+            ),
         )
-        speed_values = [
-            float(value)
-            for row in speed_rows
-            if (value := json.loads(row["measurement_json"]).get("probe_decode_tps"))
-            is not None
-        ]
-        if len(speed_values) >= self.settings.speed_baseline_samples:
-            baseline = statistics.median(speed_values)
-            if all(
-                value < baseline * self.settings.speed_slow_ratio
-                for value in speed_values[:2]
+        measurements = [json.loads(row["measurement_json"]) for row in rows]
+        if len(measurements) < self.settings.experience.baseline_min_samples:
+            return []
+        rules = (
+            ("first_response_seconds", 2.0, "high"),
+            ("total_time_seconds", 2.0, "high"),
+            ("output_speed_tps", 0.7, "low"),
+        )
+        regressions: list[str] = []
+        for metric, ratio, direction in rules:
+            values = [
+                float(item[metric])
+                for item in measurements
+                if item.get(metric) is not None
+            ]
+            if len(values) < self.settings.experience.baseline_min_samples:
+                continue
+            baseline = statistics.median(values)
+            latest = values[:2]
+            if len(latest) < 2:
+                continue
+            if direction == "high" and all(
+                value > baseline * ratio for value in latest
             ):
-                return "speed_probe_below_baseline"
-        return None
+                regressions.append(f"{metric}_regression")
+            if direction == "low" and all(value < baseline * ratio for value in latest):
+                regressions.append(f"{metric}_regression")
+        return regressions
 
     async def persist(
         self,
         deployment_id: str,
-        service: ServiceState,
-        telemetry: TelemetryState,
+        state: ResponseState,
         reasons: list[str],
+        last_route_at: str | None,
+        last_response_at: str | None,
     ) -> None:
         now = isoformat()
         existing = await self.database.query(
             "SELECT * FROM current_states WHERE deployment_id=?", (deployment_id,)
         )
-        changed = not existing or (
-            existing[0]["service_state"] != service
-            or existing[0]["telemetry_state"] != telemetry
-        )
-        telemetry_at = await self.database.scalar(
-            "SELECT MAX(observed_at) FROM scrape_snapshots WHERE deployment_id=?",
-            (deployment_id,),
-        )
+        changed = not existing or existing[0]["response_state"] != state
         await self.database.write(
             """
             INSERT INTO current_states(
-                deployment_id, service_state, telemetry_state, reasons_json,
-                telemetry_at, evaluated_at
+                deployment_id, response_state, reasons_json,
+                last_route_at, last_response_at, evaluated_at
             ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(deployment_id) DO UPDATE SET
-                service_state=excluded.service_state,
-                telemetry_state=excluded.telemetry_state,
+                response_state=excluded.response_state,
                 reasons_json=excluded.reasons_json,
-                telemetry_at=excluded.telemetry_at,
+                last_route_at=excluded.last_route_at,
+                last_response_at=excluded.last_response_at,
                 evaluated_at=excluded.evaluated_at
             """,
             (
                 deployment_id,
-                service,
-                telemetry,
+                state,
                 json.dumps(reasons),
-                telemetry_at,
+                last_route_at,
+                last_response_at,
                 now,
             ),
         )
@@ -281,33 +258,36 @@ class StateEngine:
         await self.database.write(
             """
             INSERT INTO state_history(
-                deployment_id, service_state, telemetry_state,
-                reasons_json, started_at
-            ) VALUES (?, ?, ?, ?, ?)
+                deployment_id, response_state, reasons_json, started_at
+            ) VALUES (?, ?, ?, ?)
             """,
-            (deployment_id, service, telemetry, json.dumps(reasons), now),
+            (deployment_id, state, json.dumps(reasons), now),
         )
         await self.database.write(
             """
             UPDATE events SET ended_at=?
-            WHERE deployment_id=? AND ended_at IS NULL
+            WHERE deployment_id=? AND kind='response_state' AND ended_at IS NULL
             """,
             (now, deployment_id),
         )
-        if service not in {ServiceState.OPERATIONAL, ServiceState.UNKNOWN}:
+        if state in {ResponseState.DELAYED, ResponseState.UNAVAILABLE}:
             await self.database.write(
                 """
                 INSERT INTO events(
                     deployment_id, event_key, kind, severity, state,
                     title, detail_json, started_at
-                ) VALUES (?, ?, 'service_state', ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, 'response_state', ?, ?, ?, ?, ?)
                 """,
                 (
                     deployment_id,
-                    f"service:{service}",
-                    "critical" if service == ServiceState.UNAVAILABLE else "warning",
-                    service,
-                    f"Service state changed to {service}",
+                    f"response:{state}",
+                    "critical" if state == ResponseState.UNAVAILABLE else "warning",
+                    state,
+                    (
+                        "Requests unavailable"
+                        if state == ResponseState.UNAVAILABLE
+                        else "Response checks delayed"
+                    ),
                     json.dumps({"reasons": reasons}),
                     now,
                 ),
@@ -315,8 +295,40 @@ class StateEngine:
 
     async def evaluate_all(self) -> None:
         for deployment in self.catalog.deployments:
-            service, telemetry, reasons = await self.evaluate(deployment.deployment_id)
-            await self.persist(deployment.deployment_id, service, telemetry, reasons)
+            state, reasons, route_at, response_at = await self.evaluate(
+                deployment.deployment_id
+            )
+            await self.persist(
+                deployment.deployment_id, state, reasons, route_at, response_at
+            )
+            regressions = await self._regression(deployment.deployment_id)
+            if regressions:
+                await self._persist_regression(deployment.deployment_id, regressions)
+
+    async def _persist_regression(
+        self, deployment_id: str, regressions: list[str]
+    ) -> None:
+        active = await self.database.scalar(
+            """
+            SELECT COUNT(*) FROM events
+            WHERE deployment_id=? AND event_key='response:regression'
+              AND ended_at IS NULL
+            """,
+            (deployment_id,),
+        )
+        if active:
+            return
+        now = isoformat()
+        await self.database.write(
+            """
+            INSERT INTO events(
+                deployment_id, event_key, kind, severity, state,
+                title, detail_json, started_at
+            ) VALUES (?, 'response:regression', 'response_regression',
+                      'warning', 'open', 'Response changed', ?, ?)
+            """,
+            (deployment_id, json.dumps({"reasons": regressions}), now),
+        )
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():

@@ -1,18 +1,26 @@
 import { Gauge, Hourglass, Timer } from "@phosphor-icons/react";
 import { formatAge, formatMetric } from "../lib/format";
 import type { ExperienceItem } from "../types";
-import { Reveal, SectionHeading } from "./common";
+import { Reveal, SectionHeading, StatePill } from "./common";
 
 function latency(value: number | null | undefined) {
   if (value == null) return "—";
   return value < 1 ? `${Math.round(value * 1000)} ms` : `${value.toFixed(2)} s`;
 }
 
-function experienceValue(
-  summary: number | null,
-  latest: number | null | undefined
-) {
+function value(summary: number | null, latest: number | null | undefined) {
   return summary ?? latest ?? null;
+}
+
+function pendingLabel(model: ExperienceItem) {
+  if (model.latest) {
+    return formatAge(
+      (Date.now() - Date.parse(model.latest.measured_at)) / 1000
+    );
+  }
+  if (model.latest_attempt_reason === "request_failed") return "Request failed";
+  if (model.latest_attempt_reason === "maintenance") return "Maintenance";
+  return "First check scheduled";
 }
 
 export function FleetOverview({ models }: { models: ExperienceItem[] }) {
@@ -20,74 +28,71 @@ export function FleetOverview({ models }: { models: ExperienceItem[] }) {
     <Reveal>
       <section className="page-section fleet-section" id="fleet">
         <SectionHeading
-          index="01"
-          title="End-user experience"
-          meta="Observer-path streaming requests · interactive-short-v1"
+          title="Live response"
+          meta="Recent streaming checks from this server"
         />
         <div className="experience-fleet-grid">
           {models.map((model) => {
-            const ttft = experienceValue(
-              model.ttft_p50,
-              model.latest?.client_ttft_seconds
+            const first = value(
+              model.first_response_p50,
+              model.latest?.first_response_seconds
             );
-            const tps = experienceValue(
-              model.streaming_tps_p50,
-              model.latest?.steady_state_output_tps
+            const speed = value(
+              model.output_speed_p50,
+              model.latest?.output_speed_tps
             );
-            const e2e = experienceValue(
-              model.e2e_p50,
-              model.latest?.client_e2e_seconds
+            const total = value(
+              model.total_time_p50,
+              model.latest?.total_time_seconds
             );
             return (
               <article className="experience-card" key={model.deployment_id}>
                 <div className="experience-card-head">
                   <div>
                     <strong>{model.alias}</strong>
-                    <span>{model.precision} · {model.profile_id}</span>
+                    <span>{model.precision}</span>
                   </div>
-                  <span className={`experience-state ${model.experience_state}`}>
-                    {model.experience_state.replace("experience_", "")}
-                  </span>
+                  <StatePill state={model.response_state} compact />
                 </div>
                 <div className="experience-triad">
                   <div>
                     <Timer size={15} />
-                    <span>TTFT</span>
-                    <strong>{latency(ttft)}</strong>
+                    <span>First response</span>
+                    <strong>{latency(first)}</strong>
                   </div>
                   <div>
                     <Gauge size={15} />
-                    <span>Streaming</span>
+                    <span>Output speed</span>
                     <strong>
-                      {formatMetric(tps)}
-                      {tps !== null && <small> tok/s</small>}
+                      {formatMetric(speed)}
+                      {speed !== null && <small> tok/s</small>}
                     </strong>
                   </div>
                   <div>
                     <Hourglass size={15} />
-                    <span>E2E</span>
-                    <strong>{latency(e2e)}</strong>
+                    <span>Total time</span>
+                    <strong>{latency(total)}</strong>
                   </div>
                 </div>
                 <div className="experience-card-foot">
                   <span>
-                    n={model.sample_count} ·{" "}
-                    {model.path_success_rate == null
-                      ? "success pending"
-                      : `${Math.round(model.path_success_rate * 100)}% path success`}
+                    {model.fixture_count}/3 checks · n={model.sample_count}
                   </span>
-                  <span>
-                    {model.latest
-                      ? formatAge(
-                          (Date.now() - Date.parse(model.latest.measured_at)) / 1000
-                        )
-                      : model.latest_attempt_reason ?? "awaiting turn"}
-                  </span>
+                  <span>{pendingLabel(model)}</span>
                 </div>
               </article>
             );
           })}
         </div>
+        <details className="method-details">
+          <summary>How this is measured</summary>
+          <p>
+            Each result comes from a scheduled streaming request sent by MaaS
+            Observatory. First response ends at the first visible answer text;
+            output speed uses provider-reported completion tokens; total time ends
+            when the stream completes.
+          </p>
+        </details>
       </section>
     </Reveal>
   );

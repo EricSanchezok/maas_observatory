@@ -41,7 +41,7 @@ export function formatDateTime(timestamp: string | null | undefined): string {
 }
 
 export function formatAge(seconds: number | null): string {
-  if (seconds === null) return "No telemetry";
+  if (seconds === null) return "Waiting for first check";
   if (seconds < 60) return `${Math.max(0, Math.round(seconds))}s ago`;
   return `${Math.round(seconds / 60)}m ago`;
 }
@@ -49,7 +49,9 @@ export function formatAge(seconds: number | null): string {
 export function latest(points: MetricPoint[] | undefined): number | null {
   if (!points) return null;
   for (let index = points.length - 1; index >= 0; index -= 1) {
-    if (points[index].value !== null) return points[index].value;
+    if (points[index].quality === "exact" && points[index].value !== null) {
+      return points[index].value;
+    }
   }
   return null;
 }
@@ -68,40 +70,30 @@ export interface ChartRow {
   [metric: string]: string | number | null;
 }
 
-const WINDOW_BUCKETS: Record<WindowOption, { count: number; seconds: number }> = {
-  "1h": { count: 60, seconds: 60 },
-  "6h": { count: 72, seconds: 300 },
-  "24h": { count: 288, seconds: 300 }
-};
-
 export function chartRows(
   series: MetricSeries,
   metrics: readonly string[],
-  window: WindowOption
+  _window: WindowOption
 ): ChartRow[] {
-  const { count, seconds } = WINDOW_BUCKETS[window];
-  const bucketMs = seconds * 1000;
-  const nowBucket = Math.floor(Date.now() / bucketMs) * bucketMs;
   const values = new Map<string, Record<string, number | null>>();
 
   for (const metric of metrics) {
     for (const point of series[metric] ?? []) {
-      const bucket = Math.floor(new Date(point.timestamp).getTime() / bucketMs) * bucketMs;
-      const key = new Date(bucket).toISOString();
-      const row = values.get(key) ?? {};
+      const row = values.get(point.timestamp) ?? {};
       row[metric] = point.value;
-      values.set(key, row);
+      values.set(point.timestamp, row);
     }
   }
 
-  return Array.from({ length: count }, (_, index) => {
-    const timestamp = new Date(nowBucket - (count - index - 1) * bucketMs).toISOString();
-    return {
+  return [...values.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([timestamp, row]) => ({
       timestamp,
       time: formatClock(timestamp),
-      ...Object.fromEntries(metrics.map((metric) => [metric, values.get(timestamp)?.[metric] ?? null]))
-    };
-  });
+      ...Object.fromEntries(
+        metrics.map((metric) => [metric, row[metric] ?? null])
+      )
+    }));
 }
 
 export function withSingleGapBridges(

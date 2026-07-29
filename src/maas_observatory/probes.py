@@ -1,4 +1,4 @@
-"""Low-impact liveness, canary, and fixed-profile streaming probes."""
+"""Real-request response probes and deterministic block scheduling."""
 
 from __future__ import annotations
 
@@ -7,126 +7,196 @@ import hashlib
 import json
 import statistics
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from time import monotonic
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
 from maas_common.catalog import ModelCatalog, ModelDeployment
-from maas_observatory.collector import classify_transport_error
 from maas_observatory.database import Database, isoformat
-from maas_observatory.models import (
-    ErrorClass,
-    ProbeKind,
-    ProbeOutcome,
-    ProbeResult,
-)
-from maas_observatory.settings import ExperienceSettings, ProbeSettings
-
-CANARY_PROMPT = (
-    "Return exactly the single lowercase word ok. This is a minimal automated "
-    "service-health check. Do not explain, add punctuation, call tools, or repeat "
-    "the instruction. Ignore no part of this request and finish immediately."
-)
-INTERACTIVE_SHORT_PROMPT = (
-    "Write a compact factual explanation of why bounded monitoring probes should "
-    "avoid competing with production inference traffic. Use plain text, complete "
-    "sentences, no headings, no lists, no tool calls, and no quotations. Continue "
-    "until the response limit if needed. Discuss idle gating, fixed request shapes, "
-    "transparent profiles, daily token budgets, and why operational throughput is "
-    "not an algorithmic benchmark."
+from maas_observatory.models import ErrorClass, ProbeKind, ProbeOutcome, ProbeResult
+from maas_observatory.settings import (
+    CollectionMode,
+    ExperienceSettings,
+    ProbeSettings,
 )
 
+CANARY_PROMPT = "Return exactly the lowercase word ok."
 
-def context_fixture() -> str:
-    seed = (
-        "MaaS Observatory deterministic context fixture. Each paragraph records "
-        "neutral operational facts about queues, latency, throughput, and sampling. "
-        "The final instruction asks for a concise summary without tool calls. "
-    )
-    body = (seed * ((16 * 1024 // len(seed)) + 1))[: 16 * 1024]
-    return (
-        body + "\n\nSummarize the operational trade-offs in plain text. "
-        "Do not use headings, lists, quotations, or tools."
-    )
+SHORT_TEMPLATES = (
+    (
+        "short-01",
+        "Check {nonce}. Explain in plain language why a monitoring request should "
+        "be small and repeatable. Use complete sentences and no lists.",
+    ),
+    (
+        "short-02",
+        "Check {nonce}. Describe how queueing can change the time a person waits "
+        "for a model response. Use concise plain text and no headings.",
+    ),
+    (
+        "short-03",
+        "Check {nonce}. Explain why response speed and model quality are different "
+        "measurements. Use complete sentences and no lists.",
+    ),
+)
 
-
-CONTEXT_16K_PROMPT = context_fixture()
-
-
-def profile_definitions(settings: ExperienceSettings) -> list[dict[str, Any]]:
-    definitions = [
-        {
-            "profile_id": settings.short_profile_id,
-            "definition_version": settings.definition_version,
-            "kind": "interactive_short",
-            "streaming": True,
-            "temperature": 0,
-            "configured_max_output_tokens": 64,
-            "fixture_sha256": hashlib.sha256(
-                INTERACTIVE_SHORT_PROMPT.encode()
-            ).hexdigest(),
-        },
-        {
-            "profile_id": settings.context_profile_id,
-            "definition_version": settings.definition_version,
-            "kind": "context_16k",
-            "streaming": True,
-            "temperature": 0,
-            "configured_max_output_tokens": 128,
-            "fixture_bytes": 16 * 1024,
-            "fixture_sha256": hashlib.sha256(CONTEXT_16K_PROMPT.encode()).hexdigest(),
-        },
-    ]
-    return definitions
-
-
-@dataclass(frozen=True)
-class GateDecision:
-    allowed: bool
-    reason: str | None = None
+LONG_SEEDS = (
+    (
+        "context-01",
+        "A scheduled measurement records request timing, output events, and reported "
+        "token usage without retaining content. ",
+    ),
+    (
+        "context-02",
+        "A reproducible response check uses fixed request shapes, transparent "
+        "profiles, and one observer location. ",
+    ),
+    (
+        "context-03",
+        "A low-concurrency monitor separates transport failures, service failures, "
+        "and measurement limitations. ",
+    ),
+)
 
 
 class ProbeConfigurationError(ValueError):
     """Local configuration is missing; this is not a service failure."""
 
 
+def classify_error(exc: Exception) -> tuple[ErrorClass, str]:
+    if isinstance(exc, httpx.TimeoutException):
+        return ErrorClass.TRANSPORT, "timeout"
+    if isinstance(exc, httpx.ConnectError):
+        return ErrorClass.TRANSPORT, "connect"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return ErrorClass.SERVICE, f"http_{status}"
+    return ErrorClass.MEASUREMENT, type(exc).__name__.lower()
+
+
+def block_nonce(epoch: int, block_index: int) -> str:
+    return hashlib.sha256(f"{epoch}:{block_index}".encode()).hexdigest()[:16]
+
+
+def _long_prompt(seed: str, nonce: str) -> str:
+    prefix = f"Check {nonce}. "
+    suffix = (
+        "\n\nSummarize the main operational trade-offs in concise plain text. "
+        "Do not use headings, lists, quotations, or tools."
+    )
+    size = 16 * 1024
+    body_size = size - len(prefix.encode()) - len(suffix.encode())
+    repeated = (seed * ((body_size // len(seed.encode())) + 2)).encode()[:body_size]
+    prompt = prefix.encode() + repeated + suffix.encode()
+    return prompt.decode("utf-8", errors="ignore")
+
+
+def fixture_prompt(kind: ProbeKind, fixture_index: int, nonce: str) -> tuple[str, str]:
+    if kind == ProbeKind.EXPERIENCE_SHORT:
+        fixture_id, template = SHORT_TEMPLATES[fixture_index % len(SHORT_TEMPLATES)]
+        return fixture_id, template.format(nonce=nonce)
+    if kind == ProbeKind.EXPERIENCE_CONTEXT:
+        fixture_id, seed = LONG_SEEDS[fixture_index % len(LONG_SEEDS)]
+        return fixture_id, _long_prompt(seed, nonce)
+    return "canary", CANARY_PROMPT
+
+
+def fixture_hashes() -> dict[str, str]:
+    hashes = {
+        fixture_id: hashlib.sha256(template.encode()).hexdigest()
+        for fixture_id, template in SHORT_TEMPLATES
+    }
+    hashes.update(
+        {
+            fixture_id: hashlib.sha256(
+                _long_prompt(seed, "{nonce:016}").encode()
+            ).hexdigest()
+            for fixture_id, seed in LONG_SEEDS
+        }
+    )
+    return hashes
+
+
+def profile_definitions(settings: ExperienceSettings) -> list[dict[str, Any]]:
+    hashes = fixture_hashes()
+    return [
+        {
+            "profile_id": settings.short_profile_id,
+            "definition_version": settings.definition_version,
+            "suite_version": settings.suite_version,
+            "kind": "interactive_short",
+            "streaming": True,
+            "temperature": 0,
+            "configured_max_output_tokens": 64,
+            "fixtures": [
+                {"fixture_id": fixture_id, "sha256": hashes[fixture_id]}
+                for fixture_id, _ in SHORT_TEMPLATES
+            ],
+        },
+        {
+            "profile_id": settings.context_profile_id,
+            "definition_version": settings.definition_version,
+            "suite_version": settings.suite_version,
+            "kind": "context_16k",
+            "streaming": True,
+            "temperature": 0,
+            "configured_max_output_tokens": 128,
+            "fixture_bytes": 16 * 1024,
+            "fixtures": [
+                {"fixture_id": fixture_id, "sha256": hashes[fixture_id]}
+                for fixture_id, _ in LONG_SEEDS
+            ],
+        },
+    ]
+
+
+def balanced_order(
+    deployments: list[ModelDeployment], block_index: int
+) -> list[ModelDeployment]:
+    if not deployments:
+        return []
+    offset = block_index % len(deployments)
+    ordered = deployments[offset:] + deployments[:offset]
+    if (block_index // len(deployments)) % 2:
+        ordered = list(reversed(ordered))
+    return ordered
+
+
 def _request_payload(
     deployment: ModelDeployment,
     *,
     prompt: str,
-    profile_id: str,
+    operational_profile: str,
     max_tokens: int,
-    stream: bool,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": deployment.model_id,
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
-        "stream": stream,
+        "stream": True,
         "stream_options": {"include_usage": True},
     }
     if deployment.capabilities.temperature:
         payload["temperature"] = 0
     payload.update(deployment.request_defaults)
-    if profile_id != "default-only":
-        profile = deployment.profiles.get(profile_id)
+    if operational_profile != "default-only":
+        profile = deployment.profiles.get(operational_profile)
         if profile is None:
-            raise ValueError(f"undefined profile {profile_id}")
+            raise ValueError(f"undefined profile {operational_profile}")
         payload.update(profile.request_overrides)
     return payload
 
 
-def _content_from_delta(delta: dict[str, Any]) -> str:
-    parts: list[str] = []
-    for key in ("content", "reasoning_content"):
-        value = delta.get(key)
-        if isinstance(value, str) and value:
-            parts.append(value)
-    return "".join(parts)
+def _output_from_delta(delta: dict[str, Any]) -> tuple[str, str]:
+    content = delta.get("content")
+    reasoning = delta.get("reasoning_content")
+    return (
+        content if isinstance(content, str) else "",
+        reasoning if isinstance(reasoning, str) else "",
+    )
 
 
 class ProbeRunner:
@@ -136,7 +206,8 @@ class ProbeRunner:
         settings: ProbeSettings,
         profiles: dict[str, str],
         database: Database,
-        experience: ExperienceSettings | None = None,
+        experience: ExperienceSettings,
+        collection_mode: CollectionMode,
         *,
         client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -144,7 +215,8 @@ class ProbeRunner:
         self.settings = settings
         self.profiles = profiles
         self.database = database
-        self.experience = experience or ExperienceSettings()
+        self.experience = experience
+        self.collection_mode = collection_mode
         self._client = client
         self._owns_client = client is None
         self.inference_lock = asyncio.Lock()
@@ -152,8 +224,7 @@ class ProbeRunner:
     async def __aenter__(self) -> ProbeRunner:
         if self._client is None:
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(60, read=self.settings.stream_stall_seconds),
-                follow_redirects=False,
+                timeout=httpx.Timeout(30), follow_redirects=False
             )
         return self
 
@@ -177,10 +248,10 @@ class ProbeRunner:
 
     async def route_liveness(self, deployment: ModelDeployment) -> ProbeResult:
         scheduled = started = datetime.now(UTC)
-        start_clock = monotonic()
+        started_clock = monotonic()
+        outcome = ProbeOutcome.SUCCESS
         error_class = ErrorClass.NONE
         error_code: str | None = None
-        outcome = ProbeOutcome.SUCCESS
         try:
             if not deployment.base_url or not deployment.api_key:
                 raise ProbeConfigurationError("deployment is not configured")
@@ -197,11 +268,12 @@ class ProbeRunner:
                 raise ValueError("invalid models response")
         except Exception as exc:
             outcome = ProbeOutcome.FAILED
-            error_class, error_code = classify_transport_error(exc)
             if isinstance(exc, ProbeConfigurationError):
                 error_class, error_code = ErrorClass.MEASUREMENT, "configuration"
-            elif isinstance(exc, ValueError):
+            elif isinstance(exc, (ValueError, json.JSONDecodeError)):
                 error_class, error_code = ErrorClass.SERVICE, "protocol_invalid"
+            else:
+                error_class, error_code = classify_error(exc)
         result = ProbeResult(
             deployment_id=deployment.deployment_id,
             kind=ProbeKind.ROUTE,
@@ -211,132 +283,27 @@ class ProbeRunner:
             outcome=outcome,
             error_class=error_class,
             error_code=error_code,
-            measurements={"latency_seconds": monotonic() - start_clock},
+            measurements={"route_latency_seconds": monotonic() - started_clock},
         )
         await self.persist(result)
         return result
 
-    async def load_gate(
-        self, deployment: ModelDeployment, *, context: bool = False
-    ) -> GateDecision:
-        expected = int(
+    async def _maintenance(self, deployment_id: str) -> bool:
+        return bool(
             await self.database.scalar(
                 """
-                SELECT COUNT(*) FROM metrics_sources
-                WHERE deployment_id=? AND active=1
+                SELECT COUNT(*) FROM current_states
+                WHERE deployment_id=? AND response_state='maintenance'
                 """,
-                (deployment.deployment_id,),
+                (deployment_id,),
             )
-            or 0
         )
-        rows = await self.database.query(
-            """
-            SELECT s.source_id, s.observed_at, s.quality, s.gauges_json,
-                   s.interval_json
-            FROM scrape_snapshots s
-            JOIN (
-                SELECT source_id, MAX(observed_at) AS observed_at
-                FROM scrape_snapshots WHERE deployment_id=?
-                GROUP BY source_id
-            ) latest USING(source_id, observed_at)
-            WHERE s.deployment_id=?
-            """,
-            (deployment.deployment_id, deployment.deployment_id),
-        )
-        if not rows or expected == 0 or len(rows) != expected:
-            return GateDecision(False, "telemetry_unavailable")
-        gauges_by_source: list[dict[str, Any]] = []
-        for row in rows:
-            observed = datetime.fromisoformat(row["observed_at"])
-            age = (datetime.now(UTC) - observed).total_seconds()
-            if (
-                row["quality"] != "exact"
-                or age >= self.settings.telemetry_max_age_seconds
-            ):
-                return GateDecision(False, "telemetry_not_fresh")
-            gauges_by_source.append(json.loads(row["gauges_json"]))
-        waiting = sum(
-            float(item.get("requests_waiting") or 0) for item in gauges_by_source
-        )
-        if waiting != 0:
-            return GateDecision(False, "requests_waiting")
-        kv_values = [
-            float(item["kv_cache_usage"])
-            for item in gauges_by_source
-            if item.get("kv_cache_usage") is not None
-        ]
-        kv_limit = (
-            self.settings.context_kv_cache_limit
-            if context
-            else self.settings.short_kv_cache_limit
-        )
-        if len(kv_values) != expected or max(kv_values) >= kv_limit:
-            return GateDecision(False, "kv_cache")
-        if context:
-            recent_preemptions = await self.database.scalar(
-                """
-                SELECT COUNT(*) FROM scrape_snapshots
-                WHERE deployment_id=? AND observed_at>=?
-                  AND interval_json LIKE '%"preemptions_delta": %'
-                  AND CAST(json_extract(interval_json,
-                       '$.values.preemptions_delta') AS REAL) > 0
-                """,
-                (
-                    deployment.deployment_id,
-                    isoformat(datetime.now(UTC) - timedelta(minutes=5)),
-                ),
-            )
-            if int(recent_preemptions or 0) > 0:
-                return GateDecision(False, "recent_preemption")
-        state = await self.database.query(
-            "SELECT service_state FROM current_states WHERE deployment_id=?",
-            (deployment.deployment_id,),
-        )
-        if state and state[0]["service_state"] == "maintenance":
-            return GateDecision(False, "maintenance")
-        return GateDecision(True)
 
-    async def canary_eligible(self, deployment: ModelDeployment) -> GateDecision:
-        last = await self._last_probe(deployment.deployment_id, ProbeKind.CANARY)
-        if last and datetime.now(UTC) - last < timedelta(
-            seconds=self.settings.canary_min_interval_seconds
-        ):
-            return GateDecision(False, "minimum_interval")
-        return await self.budget_available(deployment, ProbeKind.CANARY)
-
-    async def experience_eligible(
-        self, deployment: ModelDeployment, kind: ProbeKind
-    ) -> GateDecision:
-        context = kind == ProbeKind.EXPERIENCE_CONTEXT
-        gate = await self.load_gate(deployment, context=context)
-        if not gate.allowed:
-            return gate
-        last = await self._last_probe(deployment.deployment_id, kind)
-        minimum = (
-            self.settings.context_min_interval_seconds
-            if context
-            else self.settings.short_min_interval_seconds
-        )
-        if last and datetime.now(UTC) - last < timedelta(seconds=minimum):
-            return GateDecision(False, "minimum_interval")
-        return await self.budget_available(deployment, kind)
-
-    async def speed_eligible(self, deployment: ModelDeployment) -> GateDecision:
-        return await self.experience_eligible(deployment, ProbeKind.EXPERIENCE_SHORT)
-
-    async def _last_probe(self, deployment_id: str, kind: ProbeKind) -> datetime | None:
-        value = await self.database.scalar(
-            """
-            SELECT MAX(finished_at) FROM probe_runs
-            WHERE deployment_id=? AND kind=? AND outcome!='skipped'
-            """,
-            (deployment_id, kind),
-        )
-        return datetime.fromisoformat(value) if value else None
-
-    async def budget_available(
-        self, deployment: ModelDeployment, kind: ProbeKind
-    ) -> GateDecision:
+    async def _standard_budget_available(
+        self, deployment: ModelDeployment, kind: ProbeKind, max_tokens: int
+    ) -> tuple[bool, str | None]:
+        if self.collection_mode == "rapid":
+            return True, None
         rows = await self.database.query(
             """
             SELECT * FROM budget_usage
@@ -350,83 +317,48 @@ class ProbeRunner:
             else {
                 "short_requests": 0,
                 "context_requests": 0,
-                "canary_requests": 0,
-                "experience_requests": 0,
-                "input_tokens": 0,
                 "output_tokens": 0,
             }
         )
-        is_short = kind in {ProbeKind.EXPERIENCE_SHORT, ProbeKind.SPEED}
-        is_context = kind == ProbeKind.EXPERIENCE_CONTEXT
-        output = self.settings.canary_max_output_tokens
-        configured_input = 0
-        if is_short:
-            output = self.settings.short_max_output_tokens
-            configured_input = 128
-        elif is_context:
-            output = self.settings.context_max_output_tokens
-            configured_input = 16 * 1024
-        budget = self.settings.daily_budget
-        if (is_short or is_context) and int(
-            usage["experience_requests"]
-        ) >= budget.experience_requests:
-            return GateDecision(False, "daily_experience_budget")
-        if int(usage["output_tokens"]) + output > budget.output_tokens:
-            return GateDecision(False, "daily_output_token_budget")
-        if (is_short or is_context) and int(
-            usage["input_tokens"]
-        ) + configured_input > budget.input_tokens:
-            return GateDecision(False, "daily_input_token_budget")
-        if is_short and int(usage["short_requests"]) >= budget.short_requests:
-            return GateDecision(False, "daily_short_budget")
-        if is_context and int(usage["context_requests"]) >= budget.context_requests:
-            return GateDecision(False, "daily_context_budget")
+        budget = self.settings.standard_budget
         if (
-            kind == ProbeKind.CANARY
-            and int(usage["canary_requests"]) >= budget.canary_requests
+            kind == ProbeKind.EXPERIENCE_SHORT
+            and int(usage["short_requests"]) >= budget.short_requests
         ):
-            return GateDecision(False, "daily_canary_budget")
-        return GateDecision(True)
+            return False, "daily_short_budget"
+        if (
+            kind == ProbeKind.EXPERIENCE_CONTEXT
+            and int(usage["context_requests"]) >= budget.context_requests
+        ):
+            return False, "daily_context_budget"
+        if int(usage["output_tokens"]) + max_tokens > budget.output_tokens:
+            return False, "daily_output_token_budget"
+        return True, None
 
-    async def reserve_budget(
-        self,
-        deployment: ModelDeployment,
-        kind: ProbeKind,
-        max_output_tokens: int,
-        configured_input_tokens: int,
+    async def _reserve_standard_budget(
+        self, deployment: ModelDeployment, kind: ProbeKind, max_tokens: int
     ) -> None:
-        short = 1 if kind in {ProbeKind.EXPERIENCE_SHORT, ProbeKind.SPEED} else 0
-        context = 1 if kind == ProbeKind.EXPERIENCE_CONTEXT else 0
-        canary = 1 if kind == ProbeKind.CANARY else 0
-        experience = 1 if short or context else 0
+        if self.collection_mode == "rapid":
+            return
+        short = int(kind == ProbeKind.EXPERIENCE_SHORT)
+        context = int(kind == ProbeKind.EXPERIENCE_CONTEXT)
         await self.database.write(
             """
             INSERT INTO budget_usage(
-                deployment_id, budget_date, short_requests, context_requests,
-                canary_requests, experience_requests, input_tokens, output_tokens
-                , speed_requests, inference_requests
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                deployment_id, budget_date, short_requests,
+                context_requests, output_tokens
+            ) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(deployment_id, budget_date) DO UPDATE SET
                 short_requests=short_requests+excluded.short_requests,
                 context_requests=context_requests+excluded.context_requests,
-                canary_requests=canary_requests+excluded.canary_requests,
-                experience_requests=experience_requests+excluded.experience_requests,
-                input_tokens=input_tokens+excluded.input_tokens,
-                output_tokens=output_tokens+excluded.output_tokens,
-                speed_requests=speed_requests+excluded.speed_requests,
-                inference_requests=inference_requests+excluded.inference_requests
+                output_tokens=output_tokens+excluded.output_tokens
             """,
             (
                 deployment.deployment_id,
                 datetime.now(UTC).date().isoformat(),
                 short,
                 context,
-                canary,
-                experience,
-                configured_input_tokens,
-                max_output_tokens,
-                short,
-                1,
+                max_tokens,
             ),
         )
 
@@ -435,94 +367,106 @@ class ProbeRunner:
         deployment: ModelDeployment,
         kind: ProbeKind,
         *,
+        fixture_id: str | None = None,
+        prompt: str | None = None,
+        block_id: str | None = None,
+        scheduled_at: datetime | None = None,
         confirmation_of: int | None = None,
         force: bool = False,
     ) -> ProbeResult:
         if kind not in {
             ProbeKind.CANARY,
-            ProbeKind.SPEED,
             ProbeKind.EXPERIENCE_SHORT,
             ProbeKind.EXPERIENCE_CONTEXT,
             ProbeKind.CONFIRMATION,
         }:
             raise ValueError("unsupported generation probe kind")
-        scheduled = datetime.now(UTC)
-        planned_profile_id: str | None = None
-        if kind in {ProbeKind.SPEED, ProbeKind.EXPERIENCE_SHORT}:
-            planned_profile_id = self.experience.short_profile_id
-        elif kind == ProbeKind.EXPERIENCE_CONTEXT:
-            planned_profile_id = self.experience.context_profile_id
+        scheduled = scheduled_at or datetime.now(UTC)
         profile_id: str | None = None
-        if not force:
-            decision = (
-                await self.experience_eligible(deployment, kind)
-                if kind
-                in {
-                    ProbeKind.SPEED,
-                    ProbeKind.EXPERIENCE_SHORT,
-                    ProbeKind.EXPERIENCE_CONTEXT,
-                }
-                else await self.canary_eligible(deployment)
-            )
-            if not decision.allowed:
-                result = ProbeResult(
-                    deployment_id=deployment.deployment_id,
-                    kind=kind,
-                    scheduled_at=scheduled,
-                    started_at=scheduled,
-                    finished_at=datetime.now(UTC),
-                    outcome=ProbeOutcome.SKIPPED,
-                    error_code=decision.reason,
-                    profile_id=planned_profile_id,
-                    definition_version=self.experience.definition_version,
-                    vantage_id=self.experience.vantage_id,
-                )
-                await self.persist(result)
-                return result
-        try:
-            profile_id = self.profile_for(deployment)
-        except ValueError:
-            result = ProbeResult(
-                deployment_id=deployment.deployment_id,
-                kind=kind,
-                scheduled_at=scheduled,
-                started_at=scheduled,
-                finished_at=datetime.now(UTC),
-                outcome=ProbeOutcome.UNAVAILABLE,
-                error_class=ErrorClass.MEASUREMENT,
-                error_code="profile_undefined",
-            )
-            await self.persist(result)
-            return result
-
-        is_short = kind in {ProbeKind.SPEED, ProbeKind.EXPERIENCE_SHORT}
-        is_context = kind == ProbeKind.EXPERIENCE_CONTEXT
         max_tokens = self.settings.canary_max_output_tokens
-        prompt = CANARY_PROMPT
-        configured_input = 0
-        profile_definition = None
-        if is_short:
+        selected_prompt = prompt or CANARY_PROMPT
+        if kind == ProbeKind.EXPERIENCE_SHORT:
+            profile_id = self.experience.short_profile_id
             max_tokens = self.settings.short_max_output_tokens
-            prompt = INTERACTIVE_SHORT_PROMPT
-            configured_input = 128
-            profile_definition = self.experience.short_profile_id
-        elif is_context:
+        elif kind == ProbeKind.EXPERIENCE_CONTEXT:
+            profile_id = self.experience.context_profile_id
             max_tokens = self.settings.context_max_output_tokens
-            prompt = CONTEXT_16K_PROMPT
-            configured_input = 16 * 1024
-            profile_definition = self.experience.context_profile_id
+        if not force and await self._maintenance(deployment.deployment_id):
+            return await self._persist_skipped(
+                deployment,
+                kind,
+                scheduled,
+                profile_id,
+                fixture_id,
+                block_id,
+                "maintenance",
+            )
+        allowed, reason = await self._standard_budget_available(
+            deployment, kind, max_tokens
+        )
+        if not force and not allowed:
+            return await self._persist_skipped(
+                deployment, kind, scheduled, profile_id, fixture_id, block_id, reason
+            )
+        try:
+            operational_profile = self.profile_for(deployment)
+        except ValueError:
+            return await self._persist_skipped(
+                deployment,
+                kind,
+                scheduled,
+                profile_id,
+                fixture_id,
+                block_id,
+                "profile_undefined",
+                measurement=True,
+            )
         async with self.inference_lock:
-            await self.reserve_budget(deployment, kind, max_tokens, configured_input)
+            await self._reserve_standard_budget(deployment, kind, max_tokens)
             return await self._stream_generation(
                 deployment,
                 kind,
-                profile_id=profile_definition or profile_id,
-                operational_profile_id=profile_id,
-                prompt=prompt,
+                profile_id=profile_id or operational_profile,
+                operational_profile=operational_profile,
+                prompt=selected_prompt,
                 max_tokens=max_tokens,
-                confirmation_of=confirmation_of,
+                fixture_id=fixture_id,
+                block_id=block_id,
                 scheduled_at=scheduled,
+                confirmation_of=confirmation_of,
             )
+
+    async def _persist_skipped(
+        self,
+        deployment: ModelDeployment,
+        kind: ProbeKind,
+        scheduled: datetime,
+        profile_id: str | None,
+        fixture_id: str | None,
+        block_id: str | None,
+        reason: str | None,
+        *,
+        measurement: bool = False,
+    ) -> ProbeResult:
+        result = ProbeResult(
+            deployment_id=deployment.deployment_id,
+            kind=kind,
+            scheduled_at=scheduled,
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+            outcome=ProbeOutcome.SKIPPED,
+            error_class=ErrorClass.MEASUREMENT if measurement else ErrorClass.NONE,
+            error_code=reason,
+            profile_id=profile_id,
+            definition_version=self.experience.definition_version,
+            suite_version=self.experience.suite_version,
+            vantage_id=self.experience.vantage_id,
+            collection_mode=self.collection_mode,
+            fixture_id=fixture_id,
+            block_id=block_id,
+        )
+        await self.persist(result)
+        return result
 
     async def _stream_generation(
         self,
@@ -530,26 +474,30 @@ class ProbeRunner:
         kind: ProbeKind,
         *,
         profile_id: str,
-        operational_profile_id: str,
+        operational_profile: str,
         prompt: str,
         max_tokens: int,
-        confirmation_of: int | None,
+        fixture_id: str | None,
+        block_id: str | None,
         scheduled_at: datetime,
+        confirmation_of: int | None,
     ) -> ProbeResult:
         started = datetime.now(UTC)
+        scheduler_lag = max(0.0, (started - scheduled_at).total_seconds())
         request_clock = monotonic()
         headers_clock: float | None = None
         first_event: float | None = None
-        first_visible_event: float | None = None
+        first_visible: float | None = None
         last_event: float | None = None
         event_times: list[float] = []
         completion_tokens: int | None = None
         prompt_tokens: int | None = None
         finish_reason: str | None = None
+        visible_seen = False
         output_seen = False
+        outcome = ProbeOutcome.SUCCESS
         error_class = ErrorClass.NONE
         error_code: str | None = None
-        outcome = ProbeOutcome.SUCCESS
         try:
             if not deployment.base_url or not deployment.api_key:
                 raise ProbeConfigurationError("deployment is not configured")
@@ -558,16 +506,15 @@ class ProbeRunner:
             payload = _request_payload(
                 deployment,
                 prompt=prompt,
-                profile_id=operational_profile_id,
+                operational_profile=operational_profile,
                 max_tokens=max_tokens,
-                stream=True,
             )
             timeout = httpx.Timeout(60, read=self.settings.stream_stall_seconds)
 
             async def consume(client: httpx.AsyncClient) -> None:
-                nonlocal completion_tokens, first_event, first_visible_event
-                nonlocal finish_reason, headers_clock, last_event
-                nonlocal output_seen, prompt_tokens
+                nonlocal headers_clock, first_event, first_visible, last_event
+                nonlocal completion_tokens, prompt_tokens, finish_reason
+                nonlocal visible_seen, output_seen
                 async with client.stream(
                     "POST",
                     f"{base_url.rstrip('/')}/chat/completions",
@@ -584,14 +531,11 @@ class ProbeRunner:
                             break
                         event = json.loads(data)
                         usage = event.get("usage")
-                        if isinstance(usage, dict) and isinstance(
-                            usage.get("completion_tokens"), int
-                        ):
-                            completion_tokens = usage["completion_tokens"]
-                        if isinstance(usage, dict) and isinstance(
-                            usage.get("prompt_tokens"), int
-                        ):
-                            prompt_tokens = usage["prompt_tokens"]
+                        if isinstance(usage, dict):
+                            if isinstance(usage.get("completion_tokens"), int):
+                                completion_tokens = usage["completion_tokens"]
+                            if isinstance(usage.get("prompt_tokens"), int):
+                                prompt_tokens = usage["prompt_tokens"]
                         choices = event.get("choices", [])
                         if not isinstance(choices, list):
                             raise ValueError("invalid choices")
@@ -603,30 +547,30 @@ class ProbeRunner:
                             delta = choice.get("delta", {})
                             if not isinstance(delta, dict):
                                 continue
-                            content = delta.get("content")
-                            output = _content_from_delta(delta)
-                            if output:
+                            content, reasoning = _output_from_delta(delta)
+                            if content or reasoning:
                                 now = monotonic()
                                 first_event = first_event or now
-                                if isinstance(content, str) and content:
-                                    first_visible_event = first_visible_event or now
                                 last_event = now
                                 event_times.append(now)
                                 output_seen = True
+                            if content:
+                                first_visible = first_visible or now
+                                visible_seen = True
 
             if self._client is not None and not self._owns_client:
                 await consume(self._client)
             else:
                 async with httpx.AsyncClient(
                     timeout=timeout, follow_redirects=False
-                ) as fresh_client:
-                    await consume(fresh_client)
-            if not output_seen:
-                raise RuntimeError("empty_output")
+                ) as client:
+                    await consume(client)
+            if not visible_seen:
+                raise RuntimeError("empty_visible_output")
         except Exception as exc:
             outcome = ProbeOutcome.FAILED
-            if isinstance(exc, RuntimeError) and str(exc) == "empty_output":
-                error_class, error_code = ErrorClass.SERVICE, "empty_output"
+            if isinstance(exc, RuntimeError) and str(exc) == "empty_visible_output":
+                error_class, error_code = ErrorClass.SERVICE, "empty_visible_output"
             elif isinstance(exc, httpx.ReadTimeout) and output_seen:
                 error_class, error_code = ErrorClass.SERVICE, "stream_stall"
             elif isinstance(exc, ProbeConfigurationError):
@@ -634,10 +578,25 @@ class ProbeRunner:
             elif isinstance(exc, (json.JSONDecodeError, ValueError)):
                 error_class, error_code = ErrorClass.SERVICE, "protocol_invalid"
             else:
-                error_class, error_code = classify_transport_error(exc)
-
+                error_class, error_code = classify_error(exc)
         finished_clock = monotonic()
         gaps = [current - previous for previous, current in pairwise(event_times)]
+        output_speed: float | None = None
+        if (
+            completion_tokens is not None
+            and completion_tokens >= 2
+            and first_event is not None
+            and last_event is not None
+            and last_event > first_event
+        ):
+            output_speed = (completion_tokens - 1) / (last_event - first_event)
+        elif outcome == ProbeOutcome.SUCCESS:
+            error_class = ErrorClass.MEASUREMENT
+            error_code = (
+                "streaming_usage_missing"
+                if completion_tokens is None
+                else "insufficient_token_events"
+            )
         measurements: dict[str, float | int | str | None] = {
             "reported_completion_tokens": completion_tokens,
             "reported_prompt_tokens": prompt_tokens,
@@ -645,49 +604,22 @@ class ProbeRunner:
             "time_to_headers_seconds": (
                 headers_clock - request_clock if headers_clock is not None else None
             ),
-            "client_ttft_seconds": (
+            "stream_start_seconds": (
                 first_event - request_clock if first_event is not None else None
             ),
-            "first_visible_content_seconds": (
-                first_visible_event - request_clock
-                if first_visible_event is not None
-                else None
+            "first_response_seconds": (
+                first_visible - request_clock if first_visible is not None else None
             ),
-            "client_e2e_seconds": finished_clock - request_clock,
-            "stream_event_gap_p50_seconds": (statistics.median(gaps) if gaps else None),
-            "stream_event_gap_p95_seconds": (
+            "output_speed_tps": output_speed,
+            "total_time_seconds": finished_clock - request_clock,
+            "stream_gap_p50_seconds": statistics.median(gaps) if gaps else None,
+            "stream_gap_p95_seconds": (
                 sorted(gaps)[max(0, int(len(gaps) * 0.95) - 1)] if gaps else None
             ),
-            "stream_event_gap_max_seconds": max(gaps) if gaps else None,
+            "stream_gap_max_seconds": max(gaps) if gaps else None,
             "finish_reason": finish_reason,
-            "operational_profile": operational_profile_id,
+            "operational_profile": operational_profile,
         }
-        if kind in {
-            ProbeKind.SPEED,
-            ProbeKind.EXPERIENCE_SHORT,
-            ProbeKind.EXPERIENCE_CONTEXT,
-        }:
-            if (
-                completion_tokens is None
-                or completion_tokens < 2
-                or first_event is None
-                or last_event is None
-                or last_event <= first_event
-            ):
-                measurements["steady_state_output_tps"] = None
-                measurements["probe_decode_tps"] = None
-                if outcome == ProbeOutcome.SUCCESS:
-                    outcome = ProbeOutcome.UNAVAILABLE
-                    error_class = ErrorClass.MEASUREMENT
-                    error_code = (
-                        "streaming_usage_missing"
-                        if completion_tokens is None
-                        else "insufficient_token_events"
-                    )
-            else:
-                steady_tps = (completion_tokens - 1) / (last_event - first_event)
-                measurements["steady_state_output_tps"] = steady_tps
-                measurements["probe_decode_tps"] = steady_tps
         result = ProbeResult(
             deployment_id=deployment.deployment_id,
             kind=kind,
@@ -699,7 +631,12 @@ class ProbeRunner:
             error_code=error_code,
             profile_id=profile_id,
             definition_version=self.experience.definition_version,
+            suite_version=self.experience.suite_version,
             vantage_id=self.experience.vantage_id,
+            collection_mode=self.collection_mode,
+            fixture_id=fixture_id,
+            block_id=block_id,
+            scheduler_lag_seconds=scheduler_lag,
             confirmation_of=confirmation_of,
             measurements=measurements,
         )
@@ -712,8 +649,10 @@ class ProbeRunner:
             INSERT INTO probe_runs(
                 deployment_id, kind, scheduled_at, started_at, finished_at,
                 outcome, error_class, error_code, profile_id,
-                definition_version, vantage_id, confirmation_of, measurement_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                definition_version, suite_version, vantage_id,
+                collection_mode, fixture_id, block_id, scheduler_lag_seconds,
+                confirmation_of, measurement_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 result.deployment_id,
@@ -726,26 +665,29 @@ class ProbeRunner:
                 result.error_code,
                 result.profile_id,
                 result.definition_version,
+                result.suite_version,
                 result.vantage_id,
+                result.collection_mode,
+                result.fixture_id,
+                result.block_id,
+                result.scheduler_lag_seconds,
                 result.confirmation_of,
                 json.dumps(result.measurements, sort_keys=True),
             ),
         )
         units = {
-            "latency_seconds": "s",
-            "steady_state_output_tps": "tokens/s",
-            "probe_decode_tps": "tokens/s",
+            "route_latency_seconds": "s",
             "reported_completion_tokens": "tokens",
             "reported_prompt_tokens": "tokens",
-            "configured_input_tokens": "tokens",
             "configured_output_tokens": "tokens",
             "time_to_headers_seconds": "s",
-            "client_ttft_seconds": "s",
-            "first_visible_content_seconds": "s",
-            "client_e2e_seconds": "s",
-            "stream_event_gap_p50_seconds": "s",
-            "stream_event_gap_p95_seconds": "s",
-            "stream_event_gap_max_seconds": "s",
+            "stream_start_seconds": "s",
+            "first_response_seconds": "s",
+            "output_speed_tps": "tokens/s",
+            "total_time_seconds": "s",
+            "stream_gap_p50_seconds": "s",
+            "stream_gap_p95_seconds": "s",
+            "stream_gap_max_seconds": "s",
         }
         for metric, value in result.measurements.items():
             numeric = float(value) if isinstance(value, (float, int)) else None
@@ -768,28 +710,11 @@ class ProbeRunner:
 
 
 class ProbeScheduler:
-    """Persisted round-robin scheduling; inference is globally serialized."""
+    """Persisted block scheduling with one global inference lock."""
 
     def __init__(self, runner: ProbeRunner, database: Database) -> None:
         self.runner = runner
         self.database = database
-
-    async def _round_robin_index(self) -> int:
-        rows = await self.database.query(
-            "SELECT value_json FROM scheduler_state WHERE key='speed_round_robin'"
-        )
-        return int(json.loads(rows[0]["value_json"])) if rows else 0
-
-    async def _save_round_robin_index(self, index: int) -> None:
-        await self.database.write(
-            """
-            INSERT INTO scheduler_state(key, value_json, updated_at)
-            VALUES ('speed_round_robin', ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                value_json=excluded.value_json, updated_at=excluded.updated_at
-            """,
-            (json.dumps(index), isoformat()),
-        )
 
     async def route_loop(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -804,65 +729,216 @@ class ProbeScheduler:
                     stop.wait(), timeout=self.runner.settings.route_interval_seconds
                 )
 
-    async def canary_loop(self, stop: asyncio.Event) -> None:
-        while not stop.is_set():
-            for deployment in self.runner.catalog.deployments:
-                if stop.is_set():
-                    return
-                decision = await self.runner.canary_eligible(deployment)
-                if decision.allowed:
-                    await self.runner.generation(deployment, ProbeKind.CANARY)
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=60)
+    async def _load_schedule(self) -> dict[str, Any]:
+        rows = await self.database.query(
+            "SELECT value_json FROM scheduler_state WHERE key='response_blocks'"
+        )
+        if rows:
+            return cast(dict[str, Any], json.loads(rows[0]["value_json"]))
+        return {
+            "block_index": 0,
+            "short_fixture_index": 0,
+            "context_fixture_index": 0,
+            "next_short_at": None,
+            "next_context_at": None,
+            "next_rapid_at": None,
+        }
 
-    async def speed_loop(self, stop: asyncio.Event) -> None:
-        deployments = self.runner.catalog.deployments
-        index = await self._round_robin_index()
-        while not stop.is_set():
-            deployment = deployments[index % len(deployments)]
-            await self.runner.generation(deployment, ProbeKind.EXPERIENCE_SHORT)
-            index = (index + 1) % len(deployments)
-            await self._save_round_robin_index(index)
-            with suppress(TimeoutError):
-                await asyncio.wait_for(
-                    stop.wait(),
-                    timeout=self.runner.settings.short_dispatch_interval_seconds,
-                )
+    async def _save_schedule(self, value: dict[str, Any]) -> None:
+        await self.database.write(
+            """
+            INSERT INTO scheduler_state(key, value_json, updated_at)
+            VALUES ('response_blocks', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value_json=excluded.value_json, updated_at=excluded.updated_at
+            """,
+            (json.dumps(value, sort_keys=True), isoformat()),
+        )
 
-    async def context_loop(self, stop: asyncio.Event) -> None:
-        deployments = self.runner.catalog.deployments
-        index = 0
-        while not stop.is_set():
-            short_due = await self.database.scalar(
-                """
-                SELECT COUNT(*) FROM deployments d
-                WHERE d.active=1 AND NOT EXISTS (
-                    SELECT 1 FROM probe_runs p
-                    WHERE p.deployment_id=d.deployment_id
-                      AND p.kind='experience_short'
-                      AND p.outcome!='skipped' AND p.finished_at>=?
-                )
-                """,
-                (
-                    isoformat(
-                        datetime.now(UTC)
-                        - timedelta(
-                            seconds=self.runner.settings.short_min_interval_seconds
-                        )
-                    ),
-                ),
+    async def run_block(
+        self,
+        kind: ProbeKind,
+        fixture_index: int,
+        block_index: int,
+        scheduled_at: datetime,
+        stop: asyncio.Event | None = None,
+    ) -> None:
+        deployments = balanced_order(list(self.runner.catalog.deployments), block_index)
+        if not deployments:
+            return
+        epoch = await self.database.current_epoch()
+        nonce = block_nonce(epoch, block_index)
+        fixture_id, prompt = fixture_prompt(kind, fixture_index, nonce)
+        profile_id = (
+            self.runner.experience.short_profile_id
+            if kind == ProbeKind.EXPERIENCE_SHORT
+            else self.runner.experience.context_profile_id
+        )
+        block_id = f"{epoch}:{self.runner.collection_mode}:{profile_id}:{block_index}"
+        started = datetime.now(UTC)
+        lag = max(0.0, (started - scheduled_at).total_seconds())
+        await self.database.write(
+            """
+            INSERT OR REPLACE INTO collection_blocks(
+                block_id, profile_id, fixture_id, collection_mode,
+                scheduled_at, started_at, order_json,
+                scheduler_lag_seconds, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running')
+            """,
+            (
+                block_id,
+                profile_id,
+                fixture_id,
+                self.runner.collection_mode,
+                isoformat(scheduled_at),
+                isoformat(started),
+                json.dumps([item.deployment_id for item in deployments]),
+                lag,
+            ),
+        )
+        span = self.runner.settings.rapid_block_interval_seconds
+        slot = span / len(deployments)
+        status = "complete"
+        for index, deployment in enumerate(deployments):
+            if stop is not None and stop.is_set():
+                status = "interrupted"
+                break
+            slot_at = scheduled_at + timedelta(seconds=slot * index)
+            delay = (slot_at - datetime.now(UTC)).total_seconds()
+            if delay > 0:
+                try:
+                    if stop is None:
+                        await asyncio.sleep(delay)
+                    else:
+                        await asyncio.wait_for(stop.wait(), timeout=delay)
+                        status = "interrupted"
+                        break
+                except TimeoutError:
+                    pass
+            await self.runner.generation(
+                deployment,
+                kind,
+                fixture_id=fixture_id,
+                prompt=prompt,
+                block_id=block_id,
+                scheduled_at=slot_at,
             )
-            if not int(short_due or 0):
-                deployment = deployments[index % len(deployments)]
-                await self.runner.generation(deployment, ProbeKind.EXPERIENCE_CONTEXT)
-                index = (index + 1) % len(deployments)
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=300)
+        await self.database.write(
+            """
+            UPDATE collection_blocks SET finished_at=?, status=?
+            WHERE block_id=?
+            """,
+            (isoformat(), status, block_id),
+        )
+
+    async def response_loop(self, stop: asyncio.Event) -> None:
+        state = await self._load_schedule()
+        while not stop.is_set():
+            now = datetime.now(UTC)
+            block_index = int(state["block_index"])
+            if self.runner.collection_mode == "rapid":
+                next_at = (
+                    datetime.fromisoformat(state["next_rapid_at"])
+                    if state["next_rapid_at"]
+                    else now
+                )
+                delay = (next_at - now).total_seconds()
+                if delay > 0:
+                    with suppress(TimeoutError):
+                        await asyncio.wait_for(stop.wait(), timeout=delay)
+                    continue
+                short = block_index % 2 == 0
+                key = "short_fixture_index" if short else "context_fixture_index"
+                kind = (
+                    ProbeKind.EXPERIENCE_SHORT
+                    if short
+                    else ProbeKind.EXPERIENCE_CONTEXT
+                )
+                actual_start = datetime.now(UTC)
+                await self.run_block(kind, int(state[key]), block_index, next_at, stop)
+                state[key] = (int(state[key]) + 1) % 3
+                state["block_index"] = block_index + 1
+                state["next_rapid_at"] = isoformat(
+                    max(
+                        next_at
+                        + timedelta(
+                            seconds=self.runner.settings.rapid_block_interval_seconds
+                        ),
+                        actual_start
+                        + timedelta(
+                            seconds=self.runner.settings.rapid_block_interval_seconds
+                        ),
+                    )
+                )
+            else:
+                short_at = (
+                    datetime.fromisoformat(state["next_short_at"])
+                    if state["next_short_at"]
+                    else now
+                )
+                context_at = (
+                    datetime.fromisoformat(state["next_context_at"])
+                    if state["next_context_at"]
+                    else now + timedelta(seconds=1)
+                )
+                due_at, kind, key = (
+                    (short_at, ProbeKind.EXPERIENCE_SHORT, "short_fixture_index")
+                    if short_at <= context_at
+                    else (
+                        context_at,
+                        ProbeKind.EXPERIENCE_CONTEXT,
+                        "context_fixture_index",
+                    )
+                )
+                delay = (due_at - now).total_seconds()
+                if delay > 0:
+                    with suppress(TimeoutError):
+                        await asyncio.wait_for(stop.wait(), timeout=delay)
+                    continue
+                actual_start = datetime.now(UTC)
+                await self.run_block(kind, int(state[key]), block_index, due_at, stop)
+                state[key] = (int(state[key]) + 1) % 3
+                state["block_index"] = block_index + 1
+                if kind == ProbeKind.EXPERIENCE_SHORT:
+                    state["next_short_at"] = isoformat(
+                        max(
+                            due_at
+                            + timedelta(
+                                seconds=(
+                                    self.runner.settings.standard_short_interval_seconds
+                                )
+                            ),
+                            actual_start
+                            + timedelta(
+                                seconds=(
+                                    self.runner.settings.standard_short_interval_seconds
+                                )
+                            ),
+                        )
+                    )
+                else:
+                    state["next_context_at"] = isoformat(
+                        max(
+                            due_at
+                            + timedelta(
+                                seconds=(
+                                    self.runner.settings.standard_context_interval_seconds
+                                )
+                            ),
+                            actual_start
+                            + timedelta(
+                                seconds=(
+                                    self.runner.settings.standard_context_interval_seconds
+                                )
+                            ),
+                        )
+                    )
+            await self._save_schedule(state)
 
     async def confirmation_loop(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
             for deployment in self.runner.catalog.deployments:
-                rows = await self.database.query(
+                routes = await self.database.query(
                     """
                     SELECT id, finished_at, outcome FROM probe_runs
                     WHERE deployment_id=? AND kind='route'
@@ -870,31 +946,24 @@ class ProbeScheduler:
                     """,
                     (deployment.deployment_id,),
                 )
-                if len(rows) < 3 or not all(row["outcome"] == "failed" for row in rows):
-                    continue
-                latest_id = int(rows[0]["id"])
-                latest_at = datetime.fromisoformat(rows[0]["finished_at"])
-                if datetime.now(UTC) - latest_at < timedelta(
-                    seconds=self.runner.settings.confirmation_delay_seconds
+                if len(routes) < 3 or not all(
+                    row["outcome"] == "failed" for row in routes
                 ):
                     continue
-                newer_success = await self.database.scalar(
-                    """
-                    SELECT COUNT(*) FROM probe_runs
-                    WHERE deployment_id=? AND kind='route' AND outcome='success'
-                      AND finished_at>?
-                    """,
-                    (deployment.deployment_id, rows[0]["finished_at"]),
-                )
+                latest = routes[0]
+                if datetime.now(UTC) - datetime.fromisoformat(
+                    latest["finished_at"]
+                ) < timedelta(seconds=self.runner.settings.confirmation_delay_seconds):
+                    continue
                 already = await self.database.scalar(
                     "SELECT COUNT(*) FROM probe_runs WHERE confirmation_of=?",
-                    (latest_id,),
+                    (latest["id"],),
                 )
-                if not newer_success and not already:
+                if not already:
                     await self.runner.generation(
                         deployment,
                         ProbeKind.CONFIRMATION,
-                        confirmation_of=latest_id,
+                        confirmation_of=int(latest["id"]),
                     )
             with suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=30)

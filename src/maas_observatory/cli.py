@@ -17,10 +17,9 @@ from maas_common.catalog import (
     load_dotenv,
     load_model_catalog,
 )
-from maas_observatory.collector import VLLMMetricsCollector
 from maas_observatory.database import Database
 from maas_observatory.models import ProbeKind
-from maas_observatory.probes import ProbeRunner
+from maas_observatory.probes import ProbeRunner, fixture_prompt
 from maas_observatory.runtime import serve as serve_runtime
 from maas_observatory.settings import (
     DEFAULT_OBSERVABILITY_CONFIG,
@@ -60,14 +59,15 @@ def serve(
 async def _initialized_database(
     database: Database,
     models: ModelCatalog,
-    settings: ObservatorySettings | None = None,
+    settings: ObservatorySettings,
 ) -> asyncio.Task[None]:
-    await database.migrate()
+    await database.migrate(
+        collection_mode=settings.collection_mode,
+        suite_version=settings.experience.suite_version,
+    )
     task = asyncio.create_task(database.writer_loop())
     await database.wait_writer()
     await database.synchronize_catalog(models)
-    if settings is not None:
-        await database.synchronize_metrics_sources(models, settings.metrics_sources)
     return task
 
 
@@ -80,52 +80,50 @@ def inventory(
         bool,
         typer.Option(
             "--generation/--no-generation",
-            help="Verify streaming usage with one manually authorized microprobe.",
+            help="Run one manually authorized short streaming request per model.",
         ),
-    ] = True,
+    ] = False,
 ) -> None:
-    """Check metrics, OpenAI routes, profiles, and optional streaming usage."""
+    """Check OpenAI routes, request profiles, and optional streaming responses."""
 
     async def run() -> None:
         settings, models, database = _paths(config, catalog, dotenv)
         writer = await _initialized_database(database, models, settings)
         results = []
         try:
-            async with (
-                VLLMMetricsCollector(
-                    models,
-                    settings.scrape,
-                    database,
-                    settings.metrics_sources,
-                ) as collector,
-                ProbeRunner(
-                    models,
-                    settings.probes,
-                    settings.profiles,
-                    database,
-                    settings.experience,
-                ) as runner,
-            ):
+            async with ProbeRunner(
+                models,
+                settings.probes,
+                settings.profiles,
+                database,
+                settings.experience,
+                settings.collection_mode,
+            ) as runner:
                 for deployment in models.deployments:
-                    metric = await collector.fetch(deployment)
                     route = await runner.route_liveness(deployment)
-                    profile_ok = True
                     try:
                         runner.profile_for(deployment)
+                        profile = "ok"
                     except ValueError:
-                        profile_ok = False
+                        profile = "invalid"
                     stream = None
                     if generation:
+                        fixture_id, prompt = fixture_prompt(
+                            ProbeKind.EXPERIENCE_SHORT, 0, "manual-check-000"
+                        )
                         stream = await runner.generation(
-                            deployment, ProbeKind.EXPERIENCE_SHORT, force=True
+                            deployment,
+                            ProbeKind.EXPERIENCE_SHORT,
+                            fixture_id=fixture_id,
+                            prompt=prompt,
+                            force=True,
                         )
                     results.append(
                         {
                             "deployment": deployment.alias,
-                            "metrics": metric.quality,
                             "route": route.outcome,
-                            "profile": "ok" if profile_ok else "invalid",
-                            "streaming_usage": (
+                            "profile": profile,
+                            "streaming_response": (
                                 stream.outcome if stream else "not_checked"
                             ),
                         }
@@ -147,7 +145,7 @@ def probe_run(
     catalog: Annotated[Path, typer.Option()] = DEFAULT_CATALOG,
     dotenv: Annotated[Path, typer.Option()] = DEFAULT_DOTENV,
 ) -> None:
-    """Run one operator-requested probe."""
+    """Run one operator-requested route or streaming check."""
 
     async def run() -> None:
         settings, models, database = _paths(config, catalog, dotenv)
@@ -159,13 +157,20 @@ def probe_run(
                 settings.profiles,
                 database,
                 settings.experience,
+                settings.collection_mode,
             ) as runner:
                 deployment = runner.deployment(model)
-                result = (
-                    await runner.route_liveness(deployment)
-                    if kind == ProbeKind.ROUTE
-                    else await runner.generation(deployment, kind, force=force)
-                )
+                if kind == ProbeKind.ROUTE:
+                    result = await runner.route_liveness(deployment)
+                else:
+                    fixture_id, prompt = fixture_prompt(kind, 0, "manual-check-000")
+                    result = await runner.generation(
+                        deployment,
+                        kind,
+                        fixture_id=fixture_id,
+                        prompt=prompt,
+                        force=force,
+                    )
                 typer.echo(result.model_dump_json(indent=2))
         finally:
             await database.stop_writer()
@@ -179,7 +184,12 @@ def db_migrate(
     config: Annotated[Path, typer.Option()] = DEFAULT_OBSERVABILITY_CONFIG,
 ) -> None:
     settings = load_observability_settings(config)
-    asyncio.run(Database(settings.storage).migrate())
+    asyncio.run(
+        Database(settings.storage).migrate(
+            collection_mode=settings.collection_mode,
+            suite_version=settings.experience.suite_version,
+        )
+    )
     typer.echo("migration complete")
 
 
@@ -214,13 +224,18 @@ def db_reset(
     confirm: Annotated[str, typer.Option("--confirm")],
     config: Annotated[Path, typer.Option()] = DEFAULT_OBSERVABILITY_CONFIG,
 ) -> None:
-    """Explicitly rebuild the active database for metrics-source schema v2."""
+    """Explicitly rebuild the active response-probe database."""
 
     settings = load_observability_settings(config)
     database = Database(settings.storage)
-    database.reset_v2(confirm)
-    asyncio.run(database.migrate())
-    typer.echo("database reset complete; collection epoch metrics-source-v2 started")
+    database.reset_v3(confirm)
+    asyncio.run(
+        database.migrate(
+            collection_mode=settings.collection_mode,
+            suite_version=settings.experience.suite_version,
+        )
+    )
+    typer.echo("database reset complete; response-probes-v3 epoch started")
 
 
 @app.command("export")
@@ -228,7 +243,7 @@ def export_data(
     format: Annotated[Literal["json", "csv"], typer.Option()] = "json",
     config: Annotated[Path, typer.Option()] = DEFAULT_OBSERVABILITY_CONFIG,
 ) -> None:
-    """Export a sanitized operational snapshot."""
+    """Export a sanitized response-state snapshot."""
 
     async def run() -> None:
         settings = load_observability_settings(config)
@@ -236,8 +251,8 @@ def export_data(
         rows = await database.query(
             """
             SELECT d.deployment_id, d.alias, d.display_name,
-                   s.service_state, s.telemetry_state, s.telemetry_at,
-                   s.evaluated_at
+                   s.response_state, s.last_route_at,
+                   s.last_response_at, s.evaluated_at
             FROM deployments d LEFT JOIN current_states s USING(deployment_id)
             WHERE d.active=1 ORDER BY d.alias
             """

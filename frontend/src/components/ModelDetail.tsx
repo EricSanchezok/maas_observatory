@@ -1,6 +1,5 @@
 import {
   CaretDown,
-  ChartLineUp,
   Check,
   Clock,
   Gauge,
@@ -12,18 +11,16 @@ import { formatLatency, formatMetric, latest } from "../lib/format";
 import type {
   ExperienceItem,
   MetricSeries,
-  OverviewItem,
   WindowOption
 } from "../types";
 import {
-  DataFootnote,
   MetricTile,
   Reveal,
   SectionHeading,
   StatePill,
   WindowControl
 } from "./common";
-import { latencyFormatter, MetricLineChart, RequestLoadChart } from "./charts";
+import { latencyFormatter, MetricLineChart } from "./charts";
 
 function ModelChooser({
   models,
@@ -42,8 +39,15 @@ function ModelChooser({
     const close = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
+    const closeWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
     document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
+    document.addEventListener("keydown", closeWithEscape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", closeWithEscape);
+    };
   }, [open]);
 
   return (
@@ -56,13 +60,13 @@ function ModelChooser({
         onClick={() => setOpen((value) => !value)}
       >
         <span>
-          <small>VIEWING MODEL</small>
-          <strong>{selected.display_name}</strong>
+          <small>MODEL</small>
+          <strong>{selected.name}</strong>
         </span>
         <CaretDown size={18} className={open ? "is-open" : ""} />
       </button>
       {open && (
-        <div className="model-menu" role="listbox" aria-label="Select deployment">
+        <div className="model-menu" role="listbox" aria-label="Select model">
           {models.map((model) => {
             const active = model.deployment_id === selected.deployment_id;
             return (
@@ -78,7 +82,7 @@ function ModelChooser({
                 }}
               >
                 <span
-                  className={`model-menu-state ${model.experience_state}`}
+                  className={`model-menu-state state-${model.response_state}`}
                 />
                 <span>
                   <strong>{model.alias}</strong>
@@ -97,53 +101,45 @@ function ModelChooser({
 export function ModelDetail({
   models,
   selected,
-  telemetry,
   context,
   selectedId,
   onSelectedIdChange,
   dataWindow,
   onDataWindowChange,
-  experienceSeries,
+  shortSeries,
   contextSeries,
-  telemetrySeries,
   loading
 }: {
   models: ExperienceItem[];
   selected: ExperienceItem;
-  telemetry: OverviewItem | undefined;
   context: ExperienceItem | undefined;
   selectedId: string;
   onSelectedIdChange: (deploymentId: string) => void;
   dataWindow: WindowOption;
   onDataWindowChange: (window: WindowOption) => void;
-  experienceSeries: MetricSeries;
+  shortSeries: MetricSeries;
   contextSeries: MetricSeries;
-  telemetrySeries: MetricSeries;
   loading: boolean;
 }) {
-  const ttft =
-    selected.ttft_p50 ??
-    selected.latest?.client_ttft_seconds ??
-    latest(experienceSeries.client_ttft_seconds);
-  const streaming =
-    selected.streaming_tps_p50 ??
-    selected.latest?.steady_state_output_tps ??
-    latest(experienceSeries.steady_state_output_tps);
-  const e2e =
-    selected.e2e_p50 ??
-    selected.latest?.client_e2e_seconds ??
-    latest(experienceSeries.client_e2e_seconds);
-  const aggregateOutput =
-    telemetry?.metrics.aggregate_output_tps ??
-    latest(telemetrySeries.aggregate_output_tps);
+  const first =
+    selected.first_response_p50 ??
+    selected.latest?.first_response_seconds ??
+    latest(shortSeries.first_response_seconds);
+  const speed =
+    selected.output_speed_p50 ??
+    selected.latest?.output_speed_tps ??
+    latest(shortSeries.output_speed_tps);
+  const total =
+    selected.total_time_p50 ??
+    selected.latest?.total_time_seconds ??
+    latest(shortSeries.total_time_seconds);
 
   return (
     <Reveal>
       <section className="page-section detail-section" id="models">
         <SectionHeading
-          index="02"
-          title="Model experience"
-          meta="One model and one time window across every panel"
+          title="Model response"
+          meta="The model and time window apply to every panel below"
         />
         <div className="detail-frame">
           <div className="detail-toolbar">
@@ -153,12 +149,7 @@ export function ModelDetail({
               onChange={onSelectedIdChange}
             />
             <div className="detail-toolbar-meta">
-              {telemetry && (
-                <StatePill
-                  state={telemetry.service_state}
-                  telemetry={telemetry.telemetry_state}
-                />
-              )}
+              <StatePill state={selected.response_state} />
               <WindowControl value={dataWindow} onChange={onDataWindowChange} />
             </div>
           </div>
@@ -170,57 +161,59 @@ export function ModelDetail({
             <section className="detail-block performance-block">
               <div className="detail-block-head">
                 <div>
-                  <span>OBSERVER PATH</span>
-                  <h3>Interactive experience</h3>
+                  <span>QUICK CHECK</span>
+                  <h3>Recent response</h3>
                 </div>
-                <p>{selected.profile_id} · {selected.vantage_id}</p>
+                <p>
+                  {selected.fixture_count}/3 fixtures · n={selected.sample_count}
+                </p>
               </div>
               <div className="metric-grid metric-grid-three">
                 <MetricTile
-                  label="Client TTFT"
-                  value={formatLatency(ttft)}
-                  note="Request start to first output event"
+                  label="First response"
+                  value={formatLatency(first)}
+                  note="Request start to visible answer text"
                   icon={<Timer size={18} />}
                 />
                 <MetricTile
-                  label="Streaming"
-                  value={formatMetric(streaming)}
+                  label="Output speed"
+                  value={formatMetric(speed)}
                   unit="tok/s"
-                  note="Reported tokens across the steady-state stream"
+                  note="Provider-reported tokens across the stream"
                   icon={<Gauge size={18} />}
                 />
                 <MetricTile
-                  label="End to end"
-                  value={formatLatency(e2e)}
-                  note="Complete observer-path request duration"
+                  label="Total time"
+                  value={formatLatency(total)}
+                  note="Request start to completed response"
                   icon={<Clock size={18} />}
                 />
               </div>
               <div className="experience-chart-grid">
                 <MetricLineChart
-                  title="Time to first token"
-                  kicker="CLIENT TTFT"
-                  metric="client_ttft_seconds"
-                  series={experienceSeries}
+                  title="First response"
+                  kicker="SECONDS"
+                  metric="first_response_seconds"
+                  series={shortSeries}
                   window={dataWindow}
                   color="#9be7d8"
                   unit=""
                   valueFormatter={latencyFormatter}
                 />
                 <MetricLineChart
-                  title="Streaming rate"
+                  title="Output speed"
                   kicker="TOKENS / SECOND"
-                  metric="steady_state_output_tps"
-                  series={experienceSeries}
+                  metric="output_speed_tps"
+                  series={shortSeries}
                   window={dataWindow}
                   color="#e7b978"
                   unit="tok/s"
                 />
                 <MetricLineChart
-                  title="End-to-end time"
-                  kicker="CLIENT E2E"
-                  metric="client_e2e_seconds"
-                  series={experienceSeries}
+                  title="Total time"
+                  kicker="SECONDS"
+                  metric="total_time_seconds"
+                  series={shortSeries}
                   window={dataWindow}
                   color="#9384c8"
                   unit=""
@@ -232,10 +225,13 @@ export function ModelDetail({
             <section className="detail-block context-block">
               <div className="detail-block-head">
                 <div>
-                  <span>LONG CONTEXT</span>
-                  <h3>16 KiB request path</h3>
+                  <span>16 KIB INPUT</span>
+                  <h3>Long-context check</h3>
                 </div>
-                <p>Actual tokens come from provider usage</p>
+                <p>
+                  {context?.fixture_count ?? 0}/3 fixtures · n=
+                  {context?.sample_count ?? 0}
+                </p>
               </div>
               <div className="metric-grid metric-grid-three">
                 <MetricTile
@@ -245,95 +241,56 @@ export function ModelDetail({
                       latest(contextSeries.reported_prompt_tokens),
                     0
                   )}
-                  note="Tokenizer-reported input size"
+                  note="Input size reported by the provider"
                   icon={<Pulse size={18} />}
                 />
                 <MetricTile
-                  label="Client TTFT"
+                  label="First response"
                   value={formatLatency(
-                    context?.latest?.client_ttft_seconds ??
-                      latest(contextSeries.client_ttft_seconds)
+                    context?.latest?.first_response_seconds ??
+                      latest(contextSeries.first_response_seconds)
                   )}
-                  note="Prefill-sensitive first output"
+                  note="Includes long-input processing"
                   icon={<Timer size={18} />}
                 />
                 <MetricTile
-                  label="Streaming"
+                  label="Output speed"
                   value={formatMetric(
-                    context?.latest?.steady_state_output_tps ??
-                      latest(contextSeries.steady_state_output_tps)
+                    context?.latest?.output_speed_tps ??
+                      latest(contextSeries.output_speed_tps)
                   )}
                   unit="tok/s"
-                  note={context?.latest ? "Latest valid sample" : "Awaiting safe gate"}
+                  note={
+                    context?.latest
+                      ? "Latest valid check"
+                      : "Waiting for a valid sample"
+                  }
                   icon={<Gauge size={18} />}
                 />
               </div>
             </section>
 
-            <section className="detail-block telemetry-block">
+            <section className="detail-block reliability-block">
               <div className="detail-block-head">
                 <div>
-                  <span>SERVER-SIDE</span>
-                  <h3>Serving telemetry</h3>
+                  <span>RECENT REQUESTS</span>
+                  <h3>Reliability</h3>
                 </div>
-                <p>
-                  {telemetry?.observed_source_count ?? 0}/
-                  {telemetry?.expected_source_count ?? 0} instances observed
-                </p>
               </div>
-              <div className="metric-grid">
-                <MetricTile
-                  label="Aggregate output"
-                  value={formatMetric(aggregateOutput)}
-                  unit="tok/s"
-                  note="Sum of per-instance counter rates"
-                  icon={<ChartLineUp size={18} />}
-                />
-                <MetricTile
-                  label="Running"
-                  value={formatMetric(telemetry?.metrics.requests_running, 0)}
-                  note="Fresh instances summed"
-                  icon={<Pulse size={18} />}
-                />
-                <MetricTile
-                  label="Waiting"
-                  value={formatMetric(telemetry?.metrics.requests_waiting, 0)}
-                  note="Fresh instances summed"
-                  icon={<Clock size={18} />}
-                />
-                <MetricTile
-                  label="KV peak"
-                  value={
-                    telemetry?.metrics.kv_cache_usage == null
-                      ? "—"
-                      : `${formatMetric(
-                          telemetry.metrics.kv_cache_usage * 100,
-                          0
-                        )}%`
-                  }
-                  note="Maximum across observed instances"
-                  icon={<Gauge size={18} />}
-                />
+              <div className="reliability-line">
+                <strong>
+                  {selected.path_success_rate == null
+                    ? "—"
+                    : `${Math.round(selected.path_success_rate * 100)}%`}
+                </strong>
+                <span>completed request path</span>
+                <span>
+                  Measurement limitations do not count as request failures.
+                </span>
               </div>
-              <MetricLineChart
-                title="Aggregate output throughput"
-                kicker="SERVER-SIDE TOKENS / SECOND"
-                metric="aggregate_output_tps"
-                series={telemetrySeries}
-                window={dataWindow}
-                color="#d8e1e5"
-                unit="tok/s"
-                area
-              />
-              <RequestLoadChart series={telemetrySeries} window={dataWindow} />
             </section>
           </div>
         </div>
-        <DataFootnote>
-          <span>Experience: observer-path streaming requests</span>
-          <span>Telemetry: instance-scoped vLLM Prometheus counters</span>
-          <span>Missing data is never converted to zero</span>
-        </DataFootnote>
       </section>
     </Reveal>
   );

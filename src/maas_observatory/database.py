@@ -1,4 +1,4 @@
-"""SQLite persistence with migrations and a single asynchronous writer."""
+"""SQLite persistence with schema migration and a single async writer."""
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ import aiosqlite
 from maas_common.catalog import ModelCatalog
 from maas_observatory.settings import StorageSettings
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
-MIGRATION_2 = """
+SCHEMA_3 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
@@ -43,57 +43,6 @@ CREATE TABLE IF NOT EXISTS deployments (
     config_snapshot_id INTEGER NOT NULL REFERENCES config_snapshots(id),
     updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS metrics_sources (
-    deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
-    source_id TEXT NOT NULL DEFAULT 'legacy-primary',
-    active INTEGER NOT NULL DEFAULT 1,
-    config_snapshot_id INTEGER NOT NULL REFERENCES config_snapshots(id),
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY(deployment_id, source_id)
-);
-CREATE TABLE IF NOT EXISTS scrape_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
-    source_id TEXT NOT NULL DEFAULT 'legacy-primary',
-    observed_at TEXT NOT NULL,
-    elapsed_seconds REAL,
-    quality TEXT NOT NULL,
-    error_class TEXT NOT NULL,
-    error_code TEXT,
-    counters_json TEXT NOT NULL,
-    gauges_json TEXT NOT NULL,
-    histograms_json TEXT NOT NULL,
-    interval_json TEXT,
-    UNIQUE(deployment_id, source_id, observed_at)
-);
-CREATE INDEX IF NOT EXISTS idx_scrape_deployment_time
-    ON scrape_snapshots(deployment_id, source_id, observed_at);
-CREATE TABLE IF NOT EXISTS metric_accumulators (
-    deployment_id TEXT NOT NULL,
-    source_id TEXT NOT NULL DEFAULT 'legacy-primary',
-    observed_at TEXT NOT NULL,
-    counters_json TEXT NOT NULL,
-    histograms_json TEXT NOT NULL,
-    PRIMARY KEY(deployment_id, source_id)
-);
-CREATE TABLE IF NOT EXISTS rollups (
-    deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
-    resolution TEXT NOT NULL CHECK(resolution IN ('1m', '5m', '1h')),
-    bucket_at TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    sample_count INTEGER NOT NULL,
-    quality TEXT NOT NULL,
-    source_mix_json TEXT NOT NULL,
-    histogram_delta_json TEXT NOT NULL,
-    expected_source_count INTEGER NOT NULL DEFAULT 0,
-    observed_source_count INTEGER NOT NULL DEFAULT 0,
-    source_seconds_coverage REAL,
-    reset_count INTEGER NOT NULL DEFAULT 0,
-    transport_failure_count INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY(deployment_id, resolution, bucket_at)
-);
-CREATE INDEX IF NOT EXISTS idx_rollup_resolution_time
-    ON rollups(resolution, bucket_at);
 CREATE TABLE IF NOT EXISTS probe_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
@@ -106,12 +55,19 @@ CREATE TABLE IF NOT EXISTS probe_runs (
     error_code TEXT,
     profile_id TEXT,
     definition_version TEXT NOT NULL,
+    suite_version TEXT,
     vantage_id TEXT,
+    collection_mode TEXT,
+    fixture_id TEXT,
+    block_id TEXT,
+    scheduler_lag_seconds REAL,
     confirmation_of INTEGER REFERENCES probe_runs(id),
     measurement_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_probe_deployment_kind_time
     ON probe_runs(deployment_id, kind, finished_at);
+CREATE INDEX IF NOT EXISTS idx_probe_profile_fixture
+    ON probe_runs(profile_id, definition_version, fixture_id, finished_at);
 CREATE TABLE IF NOT EXISTS probe_measurements (
     probe_run_id INTEGER NOT NULL REFERENCES probe_runs(id) ON DELETE CASCADE,
     metric TEXT NOT NULL,
@@ -123,18 +79,16 @@ CREATE TABLE IF NOT EXISTS probe_measurements (
 );
 CREATE TABLE IF NOT EXISTS current_states (
     deployment_id TEXT PRIMARY KEY REFERENCES deployments(deployment_id),
-    service_state TEXT NOT NULL,
-    telemetry_state TEXT NOT NULL,
-    experience_state TEXT NOT NULL DEFAULT 'experience_collecting',
+    response_state TEXT NOT NULL DEFAULT 'collecting',
     reasons_json TEXT NOT NULL,
-    telemetry_at TEXT,
+    last_route_at TEXT,
+    last_response_at TEXT,
     evaluated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS state_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
-    service_state TEXT NOT NULL,
-    telemetry_state TEXT NOT NULL,
+    response_state TEXT NOT NULL,
     reasons_json TEXT NOT NULL,
     started_at TEXT NOT NULL,
     ended_at TEXT
@@ -158,17 +112,24 @@ CREATE TABLE IF NOT EXISTS scheduler_state (
     value_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS collection_blocks (
+    block_id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL,
+    fixture_id TEXT NOT NULL,
+    collection_mode TEXT NOT NULL,
+    scheduled_at TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    order_json TEXT NOT NULL,
+    scheduler_lag_seconds REAL NOT NULL,
+    status TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS budget_usage (
     deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
     budget_date TEXT NOT NULL,
     short_requests INTEGER NOT NULL DEFAULT 0,
     context_requests INTEGER NOT NULL DEFAULT 0,
-    canary_requests INTEGER NOT NULL DEFAULT 0,
-    experience_requests INTEGER NOT NULL DEFAULT 0,
-    input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
-    speed_requests INTEGER NOT NULL DEFAULT 0,
-    inference_requests INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(deployment_id, budget_date)
 );
 CREATE TABLE IF NOT EXISTS experience_profiles (
@@ -183,8 +144,67 @@ CREATE TABLE IF NOT EXISTS collection_epochs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     schema_version INTEGER NOT NULL,
     started_at TEXT NOT NULL,
-    reason TEXT NOT NULL
+    reason TEXT NOT NULL,
+    collection_mode TEXT NOT NULL,
+    suite_version TEXT NOT NULL
 );
+"""
+
+MIGRATE_2_TO_3 = """
+ALTER TABLE probe_runs ADD COLUMN suite_version TEXT;
+ALTER TABLE probe_runs ADD COLUMN collection_mode TEXT;
+ALTER TABLE probe_runs ADD COLUMN fixture_id TEXT;
+ALTER TABLE probe_runs ADD COLUMN block_id TEXT;
+ALTER TABLE probe_runs ADD COLUMN scheduler_lag_seconds REAL;
+DROP TABLE IF EXISTS state_history;
+DROP TABLE IF EXISTS current_states;
+DROP TABLE IF EXISTS rollups;
+DROP TABLE IF EXISTS metric_accumulators;
+DROP TABLE IF EXISTS scrape_snapshots;
+DROP TABLE IF EXISTS metrics_sources;
+DROP TABLE IF EXISTS budget_usage;
+CREATE TABLE current_states (
+    deployment_id TEXT PRIMARY KEY REFERENCES deployments(deployment_id),
+    response_state TEXT NOT NULL DEFAULT 'collecting',
+    reasons_json TEXT NOT NULL,
+    last_route_at TEXT,
+    last_response_at TEXT,
+    evaluated_at TEXT NOT NULL
+);
+CREATE TABLE state_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
+    response_state TEXT NOT NULL,
+    reasons_json TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT
+);
+CREATE TABLE budget_usage (
+    deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
+    budget_date TEXT NOT NULL,
+    short_requests INTEGER NOT NULL DEFAULT 0,
+    context_requests INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(deployment_id, budget_date)
+);
+CREATE TABLE collection_blocks (
+    block_id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL,
+    fixture_id TEXT NOT NULL,
+    collection_mode TEXT NOT NULL,
+    scheduled_at TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    order_json TEXT NOT NULL,
+    scheduler_lag_seconds REAL NOT NULL,
+    status TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_probe_profile_fixture
+    ON probe_runs(profile_id, definition_version, fixture_id, finished_at);
+ALTER TABLE collection_epochs ADD COLUMN collection_mode TEXT
+    NOT NULL DEFAULT 'standard';
+ALTER TABLE collection_epochs ADD COLUMN suite_version TEXT
+    NOT NULL DEFAULT 'response-suite-v2';
 """
 
 
@@ -200,7 +220,7 @@ class WriteCommand:
 
 
 class Database:
-    """Own the SQLite file and serialize all runtime writes."""
+    """Own the SQLite file and serialize runtime writes."""
 
     def __init__(self, settings: StorageSettings) -> None:
         self.settings = settings
@@ -224,43 +244,75 @@ class Database:
         await connection.execute("PRAGMA busy_timeout=5000")
         await connection.execute("PRAGMA synchronous=NORMAL")
 
-    async def migrate(self) -> None:
+    async def _schema_version(self) -> int:
+        if not self.path.exists():
+            return 0
+        connection = await aiosqlite.connect(self.path)
+        try:
+            row = await (await connection.execute("PRAGMA user_version")).fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            await connection.close()
+
+    async def migrate(
+        self,
+        *,
+        collection_mode: str = "standard",
+        suite_version: str = "response-suite-v2",
+    ) -> None:
         self.prepare_directories()
+        version = await self._schema_version()
+        if version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"database schema {version} is newer than supported {SCHEMA_VERSION}"
+            )
+        if version == 1:
+            raise RuntimeError("schema v1 is unsupported; reset to response-probes-v3")
+        if version == 2:
+            await self.backup()
         connection = await aiosqlite.connect(self.path)
         try:
             await self._configure(connection)
             await connection.execute("PRAGMA journal_mode=WAL")
             await connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
-            row = await (await connection.execute("PRAGMA user_version")).fetchone()
-            version = int(row[0]) if row else 0
-            if version > SCHEMA_VERSION:
-                raise RuntimeError(
-                    "database schema "
-                    f"{version} is newer than supported {SCHEMA_VERSION}"
-                )
-            if version == 1:
-                raise RuntimeError(
-                    "schema v1 data uses deployment-scoped counters; run "
-                    "'maas-observatory db backup' then "
-                    "'maas-observatory db reset --confirm metrics-source-v2'"
-                )
-            if version < 2:
-                await connection.executescript(MIGRATION_2)
+            if version == 0:
+                await connection.executescript(SCHEMA_3)
+            elif version == 2:
+                await connection.executescript(MIGRATE_2_TO_3)
+                await connection.executescript(SCHEMA_3)
                 await connection.execute(
-                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-                    (2, isoformat()),
+                    """
+                    DELETE FROM events
+                    WHERE kind IN ('service_state', 'telemetry_state')
+                    """
+                )
+            if version < 3:
+                await connection.execute(
+                    "INSERT OR REPLACE INTO schema_migrations(version, applied_at) "
+                    "VALUES (3, ?)",
+                    (isoformat(),),
                 )
                 await connection.execute(
                     """
-                    INSERT INTO collection_epochs(schema_version, started_at, reason)
-                    VALUES (2, ?, 'metrics-source-v2')
+                    INSERT INTO collection_epochs(
+                        schema_version, started_at, reason,
+                        collection_mode, suite_version
+                    ) VALUES (3, ?, 'response-probes-v3', ?, ?)
                     """,
-                    (isoformat(),),
+                    (isoformat(), collection_mode, suite_version),
                 )
-                await connection.execute("PRAGMA user_version=2")
+                await connection.execute("PRAGMA user_version=3")
             await connection.commit()
         finally:
             await connection.close()
+
+    async def current_epoch(self) -> int:
+        return int(
+            await self.scalar(
+                "SELECT id FROM collection_epochs ORDER BY id DESC LIMIT 1"
+            )
+            or 0
+        )
 
     async def quick_check(self) -> tuple[bool, str]:
         if not self.path.exists():
@@ -324,9 +376,7 @@ class Database:
 
     async def scalar(self, sql: str, params: Sequence[Any] = ()) -> Any:
         rows = await self.query(sql, params)
-        if not rows:
-            return None
-        return next(iter(rows[0].values()))
+        return next(iter(rows[0].values())) if rows else None
 
     async def synchronize_catalog(self, catalog: ModelCatalog) -> None:
         public_document = {
@@ -392,60 +442,17 @@ class Database:
                     now,
                 ),
             )
-        placeholders = ",".join("?" for _ in active_ids)
-        deactivate_sql = (
-            "UPDATE deployments SET active=0 "
-            f"WHERE deployment_id NOT IN ({placeholders})"
-        )
-        await self.write(
-            deactivate_sql,
-            tuple(active_ids),
-        )
+        if active_ids:
+            placeholders = ",".join("?" for _ in active_ids)
+            await self.write(
+                "UPDATE deployments SET active=0 "
+                f"WHERE deployment_id NOT IN ({placeholders})",
+                tuple(active_ids),
+            )
 
-    async def synchronize_metrics_sources(
-        self, catalog: ModelCatalog, sources: dict[str, list[Any]]
-    ) -> None:
-        """Persist only stable source identifiers; never URLs or credentials."""
-
-        now = isoformat()
-        snapshot_id = await self.scalar(
-            "SELECT id FROM config_snapshots ORDER BY id DESC LIMIT 1"
-        )
-        if snapshot_id is None:
-            raise RuntimeError("catalog must be synchronized before metrics sources")
-        by_alias = {item.alias: item for item in catalog.deployments}
-        for alias, configured in sources.items():
-            deployment = by_alias.get(alias)
-            if deployment is None:
-                raise ValueError(f"metrics sources reference unknown model: {alias}")
-            active: list[str] = []
-            for source in configured:
-                active.append(source.source_id)
-                await self.write(
-                    """
-                    INSERT INTO metrics_sources(
-                        deployment_id, source_id, active,
-                        config_snapshot_id, updated_at
-                    ) VALUES (?, ?, 1, ?, ?)
-                    ON CONFLICT(deployment_id, source_id) DO UPDATE SET
-                        active=1, config_snapshot_id=excluded.config_snapshot_id,
-                        updated_at=excluded.updated_at
-                    """,
-                    (deployment.deployment_id, source.source_id, snapshot_id, now),
-                )
-            if active:
-                placeholders = ",".join("?" for _ in active)
-                await self.write(
-                    f"""
-                    UPDATE metrics_sources SET active=0
-                    WHERE deployment_id=? AND source_id NOT IN ({placeholders})
-                    """,
-                    (deployment.deployment_id, *active),
-                )
-
-    def reset_v2(self, confirmation: str) -> None:
-        if confirmation != "metrics-source-v2":
-            raise ValueError("confirmation must be exactly metrics-source-v2")
+    def reset_v3(self, confirmation: str) -> None:
+        if confirmation != "response-probes-v3":
+            raise ValueError("confirmation must be exactly response-probes-v3")
         for path in (
             self.path,
             self.path.with_name(f"{self.path.name}-wal"),
@@ -489,8 +496,10 @@ class Database:
             age = timestamp - stamp
             day_key = stamp.strftime("%Y-%m-%d")
             week_key = stamp.strftime("%G-W%V")
-            within_daily = age <= timedelta(days=self.settings.daily_backups)
-            if within_daily and day_key not in daily:
+            if (
+                age <= timedelta(days=self.settings.daily_backups)
+                and day_key not in daily
+            ):
                 daily.add(day_key)
                 keep.add(path)
             if (
@@ -504,35 +513,10 @@ class Database:
                 path.unlink()
 
     async def apply_retention(self, *, now: datetime | None = None) -> None:
-        timestamp = now or datetime.now(UTC)
-        thresholds = {
-            "scrape_snapshots": timestamp
-            - timedelta(days=self.settings.raw_retention_days),
-            "probe_runs": timestamp
-            - timedelta(days=self.settings.probe_retention_days),
-        }
-        await self.write(
-            "DELETE FROM scrape_snapshots WHERE observed_at < ?",
-            (isoformat(thresholds["scrape_snapshots"]),),
+        cutoff = (now or datetime.now(UTC)) - timedelta(
+            days=self.settings.probe_retention_days
         )
         await self.write(
-            "DELETE FROM probe_runs WHERE finished_at < ?",
-            (isoformat(thresholds["probe_runs"]),),
-        )
-        await self.write(
-            "DELETE FROM rollups WHERE resolution='1m' AND bucket_at < ?",
-            (
-                isoformat(
-                    timestamp - timedelta(days=self.settings.minute_retention_days)
-                ),
-            ),
-        )
-        await self.write(
-            "DELETE FROM rollups WHERE resolution='5m' AND bucket_at < ?",
-            (
-                isoformat(
-                    timestamp - timedelta(days=self.settings.five_minute_retention_days)
-                ),
-            ),
+            "DELETE FROM probe_runs WHERE finished_at < ?", (isoformat(cutoff),)
         )
         await self.write("PRAGMA incremental_vacuum(200)")

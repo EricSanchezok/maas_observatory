@@ -1,22 +1,14 @@
 import { Clock, Gauge, Pulse, ShieldCheck } from "@phosphor-icons/react";
-import {
-  comparisonMode,
-  comparisonStatusCounts
-} from "../lib/comparison";
+import { comparisonMode, comparisonStatusCounts } from "../lib/comparison";
 import { formatDateTime, formatMetric } from "../lib/format";
 import type { CompareItem } from "../types";
 import { DataFootnote, Reveal, SectionHeading } from "./common";
 
 const REASON_LABELS: Record<string, string> = {
-  busy: "Busy",
-  telemetry_pending: "Telemetry pending",
-  recently_active: "Recently active",
-  budget_deferred: "Budget deferred",
-  scheduled_interval: "Scheduled",
+  first_check_scheduled: "First check scheduled",
+  scheduled_later: "Scheduled later",
   maintenance: "Maintenance",
-  deferred: "Deferred",
-  attempt_failed: "Attempt failed",
-  awaiting_turn: "Awaiting turn"
+  request_failed: "Request failed"
 };
 
 function SamplingStatus({ items }: { items: CompareItem[] }) {
@@ -39,6 +31,7 @@ function EmptyComparison({ items }: { items: CompareItem[] }) {
     .sort((left, right) =>
       String(right.latest_attempt_at).localeCompare(String(left.latest_attempt_at))
     )[0];
+  const complete = items.filter((item) => item.complete_fixture_set).length;
 
   return (
     <div className="comparison-progress">
@@ -47,17 +40,17 @@ function EmptyComparison({ items }: { items: CompareItem[] }) {
           <Pulse size={22} />
         </div>
         <div>
-          <span>MEASUREMENT PROGRESS</span>
-          <strong>0/{items.length}</strong>
-          <p>Valid observer-path experience samples</p>
+          <span>CHECK PROGRESS</span>
+          <strong>{complete}/{items.length}</strong>
+          <p>Three fixtures are required before models are compared.</p>
         </div>
       </div>
       <SamplingStatus items={items} />
       <div className="comparison-progress-meta">
         <ShieldCheck size={17} />
-        <span>Load gates remain active</span>
+        <span>One streaming request at a time</span>
         <time dateTime={latestAttempt?.latest_attempt_at ?? undefined}>
-          Last attempt {formatDateTime(latestAttempt?.latest_attempt_at)}
+          Last check {formatDateTime(latestAttempt?.latest_attempt_at)}
         </time>
       </div>
     </div>
@@ -75,13 +68,13 @@ function SingleResult({
     <div className="single-result">
       <div className="single-result-value">
         <Gauge size={21} />
-        <span>FIRST VALID SAMPLE</span>
+        <span>FIRST COMPLETE SET</span>
         <strong>{formatMetric(result.value)}</strong>
         <small>{result.unit}</small>
       </div>
       <div className="single-result-model">
         <strong>{result.alias}</strong>
-        <span>{result.profile_id ?? "profile unavailable"}</span>
+        <span>3/3 fixtures · n={result.sample_count}</span>
         <time dateTime={result.measured_at ?? undefined}>
           {formatDateTime(result.measured_at)}
         </time>
@@ -89,7 +82,7 @@ function SingleResult({
       <div className="single-result-pending">
         <Clock size={18} />
         <strong>{allItems.length - 1}</strong>
-        <span>deployments pending</span>
+        <span>models still collecting</span>
       </div>
       <SamplingStatus items={allItems} />
     </div>
@@ -117,7 +110,7 @@ function RankedResults({
           </span>
           <div className="ranked-model">
             <strong>{item.alias}</strong>
-            <span>{item.profile_id ?? "profile unavailable"}</span>
+            <span>3/3 fixtures</span>
           </div>
           <div className="ranked-track">
             <span style={{ width: `${((item.value ?? 0) / maximum) * 100}%` }} />
@@ -131,7 +124,7 @@ function RankedResults({
       {pendingCount > 0 && (
         <div className="ranked-pending">
           <Pulse size={16} />
-          {pendingCount} deployments pending a valid sample
+          {pendingCount} models are still completing the fixture set
         </div>
       )}
     </div>
@@ -141,16 +134,18 @@ function RankedResults({
 export function SpeedComparison({ items }: { items: CompareItem[] }) {
   const valid = items.filter((item) => item.value !== null);
   const mode = comparisonMode(items);
+  const collectionMode = items[0]?.collection_mode ?? "standard";
 
   return (
     <Reveal>
       <section className="page-section comparison-section" id="comparison">
         <SectionHeading
-          index="03"
-          title={mode === "ranked" ? "Experience comparison" : "Experience sampling"}
-          meta="Same profile, definition, vantage and time window"
+          title="Compare responses"
+          meta="Output speed across the same three quick-check fixtures"
         >
-          <div className="probe-profile">INTERACTIVE-SHORT-V1</div>
+          <div className={`probe-profile mode-${collectionMode}`}>
+            {collectionMode === "rapid" ? "RAPID COLLECTION" : "STANDARD"}
+          </div>
         </SectionHeading>
         {mode === "empty" && <EmptyComparison items={items} />}
         {mode === "single" && (
@@ -163,9 +158,11 @@ export function SpeedComparison({ items }: { items: CompareItem[] }) {
           />
         )}
         <DataFootnote>
-          <span>Global active-probe concurrency: 1</span>
-          <span>Observer-path measurements, not benchmark scores</span>
-          <span>Profile, vantage and sample count retained per deployment</span>
+          <span>Same fixture suite, version and server location</span>
+          <span>Results describe response behavior, not model quality</span>
+          {collectionMode === "rapid" && (
+            <span>Rapid collection continues until manually changed</span>
+          )}
         </DataFootnote>
       </section>
     </Reveal>

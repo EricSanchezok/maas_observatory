@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "maas-observatory"
-version = "0.3.0"
+version = "0.4.0"
 description = "Low-impact MaaS observability and reproducible tool-use evaluation"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -14,7 +14,6 @@ dependencies = [
   "fastapi>=0.116,<1",
   "httpx>=0.28.1,<1",
   "matplotlib>=3.10,<4",
-  "prometheus-client>=0.22,<1",
   "pydantic>=2.11,<3",
   "PyYAML>=6.0.2,<7",
   "typer>=0.16,<1",

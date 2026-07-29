@@ -17,13 +17,6 @@ class FrozenModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class Quality(StrEnum):
-    EXACT = "exact"
-    INCOMPLETE = "incomplete"
-    UNAVAILABLE = "unavailable"
-    INVALID = "invalid"
-
-
 class ErrorClass(StrEnum):
     TRANSPORT = "transport_error"
     SERVICE = "service_error"
@@ -31,34 +24,18 @@ class ErrorClass(StrEnum):
     NONE = "none"
 
 
-class ServiceState(StrEnum):
-    OPERATIONAL = "operational"
-    SLOW = "slow"
-    DEGRADED = "degraded"
+class ResponseState(StrEnum):
+    COLLECTING = "collecting"
+    CURRENT = "current"
+    DELAYED = "delayed"
     UNAVAILABLE = "unavailable"
     MAINTENANCE = "maintenance"
-    UNKNOWN = "unknown"
-
-
-class TelemetryState(StrEnum):
-    FRESH = "fresh"
-    PARTIAL = "partial"
-    STALE = "stale"
-    UNAVAILABLE = "unavailable"
-
-
-class ExperienceState(StrEnum):
-    FRESH = "experience_fresh"
-    STALE = "experience_stale"
-    UNAVAILABLE = "experience_unavailable"
-    COLLECTING = "experience_collecting"
 
 
 class ProbeKind(StrEnum):
     ROUTE = "route"
     CANARY = "canary"
     EXPERIENCE_SHORT = "experience_short"
-    SPEED = "speed"
     EXPERIENCE_CONTEXT = "experience_context"
     CONFIRMATION = "confirmation"
 
@@ -66,39 +43,7 @@ class ProbeKind(StrEnum):
 class ProbeOutcome(StrEnum):
     SUCCESS = "success"
     FAILED = "failed"
-    UNAVAILABLE = "unavailable"
     SKIPPED = "skipped"
-
-
-class Histogram(FrozenModel):
-    buckets: dict[float, float] = Field(default_factory=dict)
-    count: float = 0
-    total: float = 0
-
-
-class MetricSnapshot(FrozenModel):
-    deployment_id: str
-    source_id: str = "legacy-primary"
-    observed_at: datetime
-    elapsed_seconds: float | None = None
-    counters: dict[str, float] = Field(default_factory=dict)
-    gauges: dict[str, float] = Field(default_factory=dict)
-    histograms: dict[str, Histogram] = Field(default_factory=dict)
-    quality: Quality = Quality.EXACT
-    error_class: ErrorClass = ErrorClass.NONE
-    error_code: str | None = None
-
-
-class IntervalMetrics(FrozenModel):
-    deployment_id: str
-    source_id: str = "legacy-primary"
-    started_at: datetime
-    ended_at: datetime
-    values: dict[str, float | None]
-    histograms: dict[str, Histogram] = Field(default_factory=dict)
-    sample_count: int = 0
-    quality: Quality
-    reason: str | None = None
 
 
 class ProbeResult(FrozenModel):
@@ -111,30 +56,19 @@ class ProbeResult(FrozenModel):
     error_class: ErrorClass = ErrorClass.NONE
     error_code: str | None = None
     profile_id: str | None = None
-    definition_version: str = "1"
+    definition_version: str = "2"
+    suite_version: str | None = None
     vantage_id: str | None = None
+    collection_mode: str | None = None
+    fixture_id: str | None = None
+    block_id: str | None = None
+    scheduler_lag_seconds: float | None = None
     confirmation_of: int | None = None
     measurements: dict[str, float | int | str | None] = Field(default_factory=dict)
 
 
-class PublicPoint(FrozenModel):
-    timestamp: datetime
-    value: float | int | None
-    unit: str
-    source_kind: str
-    observation_scope: str
-    quality: Literal["exact", "incomplete", "unavailable"]
-    sample_count: int
-    profile_id: str | None = None
-    definition_version: str = "1"
-    vantage_id: str | None = None
-    coverage: float | None = None
-    measured_at: datetime | None = None
-    reason: str | None = None
-
-
 class ApiEnvelope(FrozenModel):
-    schema_version: Literal["2"] = "2"
+    schema_version: Literal["3"] = "3"
     generated_at: datetime = Field(default_factory=utc_now)
     data_window: str
     freshness_seconds: float | None

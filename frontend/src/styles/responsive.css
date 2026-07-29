@@ -17,10 +17,6 @@
     right: -80px;
   }
 
-  .fleet-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
   .experience-fleet-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -41,12 +37,6 @@
 
   .detail-toolbar-meta {
     justify-content: space-between;
-  }
-
-  .throughput-grid,
-  .latency-grid,
-  .event-grid {
-    grid-template-columns: 1fr;
   }
 
   .metric-grid {
@@ -100,15 +90,15 @@
   }
 
   .masthead {
-    min-height: 440px;
+    min-height: 400px;
     padding: 64px 0 40px;
   }
 
   .masthead h1 {
     max-width: 340px;
     margin: 20px 0 42px;
-    font-size: clamp(52px, 17vw, 68px);
-    line-height: 0.86;
+    font-size: clamp(48px, 15vw, 60px);
+    line-height: 0.9;
   }
 
   .masthead h1 span {
@@ -156,10 +146,6 @@
 
   .section-heading h2 {
     font-size: 36px;
-  }
-
-  .fleet-grid {
-    grid-template-columns: 1fr;
   }
 
   .experience-fleet-grid,
@@ -210,14 +196,6 @@
     display: none;
   }
 
-  .detail-summary,
-  .load-readouts {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    width: 100%;
-    gap: 8px;
-  }
-
   .metric-grid {
     grid-template-columns: 1fr;
   }
@@ -237,16 +215,9 @@
     padding: 13px 14px;
   }
 
-  .chart-body,
-  .chart-panel.is-compact .chart-body,
-  .request-load-chart .chart-body,
-  .error-chart .chart-body {
+  .chart-body {
     height: 250px;
     padding-inline: 2px;
-  }
-
-  .chart-legend {
-    display: none;
   }
 
   .chart-coverage {

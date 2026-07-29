@@ -3,8 +3,9 @@
 This repository contains two independent applications for OpenAI-compatible
 MaaS deployments:
 
-1. `maas_observatory` provides low-impact operational telemetry and a public,
-   read-only API;
+1. `maas_observatory` checks route availability and real streaming response
+   timing from one declared observer location, then provides a public read-only
+   API;
 2. `tooluse_bench` runs offline, reproducible tool-use evaluations.
 
 The evaluation reports three dimensions separately:
@@ -19,11 +20,11 @@ does not publish private endpoint URLs or credentials.
 
 Start with the [methodology](methodology.md), then follow the
 [reproducibility guide](reproducibility.md). The
-[service observability research](service-observability.md) defines the
-low-impact monitoring, latency, throughput, and capacity-measurement model for
-the configured deployments. The
-[MaaS Observatory data backend design](observability-data-backend-design.md)
-defines the authoritative priorities, collection policy, public API, and
-frontend data contract for the real-time observability site.
-The [operations guide](maas-observatory-operations.md) documents the implemented
-CLI, storage lifecycle, deployment model, public endpoints, and recovery steps.
+[operations guide](maas-observatory-operations.md) is the authoritative
+description of implemented response checks, collection modes, the public API,
+storage lifecycle, and recovery. The
+[service observability research](service-observability.md) and
+[historical backend design](observability-data-backend-design.md) remain
+research records. White-box serving metrics described there are future options
+only if stable per-instance sources become available; they are not current
+MaaS Observatory capabilities.

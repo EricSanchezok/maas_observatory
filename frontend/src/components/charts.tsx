@@ -2,15 +2,12 @@ import { Pulse } from "@phosphor-icons/react";
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Line,
-  LineChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
-  YAxis
+  YAxis,
+  ResponsiveContainer
 } from "recharts";
 import { useMemo } from "react";
 import {
@@ -20,7 +17,7 @@ import {
   formatMetric,
   withSingleGapBridges
 } from "../lib/format";
-import type { MetricSeries, OverviewItem, WindowOption } from "../types";
+import type { MetricSeries, WindowOption } from "../types";
 
 const tooltipStyle = {
   background: "#12171b",
@@ -28,8 +25,7 @@ const tooltipStyle = {
   borderRadius: "8px",
   color: "#edf2f4",
   fontFamily: "inherit",
-  fontSize: "12px",
-  boxShadow: "0 16px 36px rgba(0,0,0,.28)"
+  fontSize: "12px"
 };
 
 function EmptyChart({ label }: { label: string }) {
@@ -56,7 +52,7 @@ function Coverage({
         <span style={{ width: `${percent}%` }} />
       </div>
       <p>
-        {percent}% coverage · {valid}/{total} buckets
+        {percent}% coverage · {valid}/{total} checks
       </p>
     </div>
   );
@@ -70,9 +66,7 @@ export function MetricLineChart({
   window,
   color,
   unit,
-  valueFormatter = formatMetric,
-  area = false,
-  compact = false
+  valueFormatter = formatMetric
 }: {
   title: string;
   kicker: string;
@@ -82,8 +76,6 @@ export function MetricLineChart({
   color: string;
   unit: string;
   valueFormatter?: (value: number | null | undefined) => string;
-  area?: boolean;
-  compact?: boolean;
 }) {
   const rows = useMemo(
     () => withSingleGapBridges(chartRows(series, [metric], window), metric),
@@ -98,10 +90,9 @@ export function MetricLineChart({
     return null;
   }, [metric, rows]);
   const gradientId = `fill-${metric.replaceAll("_", "-")}`;
-  const enoughData = stats.valid >= 2;
 
   return (
-    <article className={`chart-panel ${compact ? "is-compact" : ""}`}>
+    <article className="chart-panel">
       <header className="chart-panel-head">
         <div>
           <span>{kicker}</span>
@@ -113,7 +104,7 @@ export function MetricLineChart({
         </strong>
       </header>
       <div className="chart-body">
-        {enoughData ? (
+        {stats.valid >= 2 ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               data={rows}
@@ -131,44 +122,32 @@ export function MetricLineChart({
                 tickLine={false}
                 axisLine={false}
                 minTickGap={70}
-                tick={{ fill: "#6f7a84", fontSize: 10 }}
+                tick={{ fill: "#77828c", fontSize: 10 }}
               />
               <YAxis
                 tickLine={false}
                 axisLine={false}
                 width={54}
-                tick={{ fill: "#6f7a84", fontSize: 10 }}
+                tick={{ fill: "#77828c", fontSize: 10 }}
                 tickFormatter={(value: number) => formatMetric(value, 0)}
               />
               <Tooltip
                 contentStyle={tooltipStyle}
-                labelStyle={{ color: "#8c98a2", marginBottom: 6 }}
+                labelStyle={{ color: "#bbc4cb", marginBottom: 6 }}
                 formatter={(value) => [
                   `${valueFormatter(Number(value))} ${unit}`,
                   title
                 ]}
               />
-              {area ? (
-                <Area
-                  type="monotone"
-                  dataKey={metric}
-                  stroke={color}
-                  strokeWidth={2}
-                  fill={`url(#${gradientId})`}
-                  connectNulls={false}
-                  isAnimationActive={false}
-                />
-              ) : (
-                <Line
-                  type="monotone"
-                  dataKey={metric}
-                  stroke={color}
-                  strokeWidth={2}
-                  dot={false}
-                  connectNulls={false}
-                  isAnimationActive={false}
-                />
-              )}
+              <Area
+                type="monotone"
+                dataKey={metric}
+                stroke={color}
+                strokeWidth={2}
+                fill={`url(#${gradientId})`}
+                connectNulls={false}
+                isAnimationActive={false}
+              />
               <Line
                 type="linear"
                 dataKey={`${metric}_bridge`}
@@ -184,160 +163,10 @@ export function MetricLineChart({
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <EmptyChart label="At least two valid buckets are required" />
+          <EmptyChart label="Waiting for two valid checks" />
         )}
       </div>
       <Coverage {...stats} />
-    </article>
-  );
-}
-
-export function RequestLoadChart({
-  series,
-  window
-}: {
-  series: MetricSeries;
-  window: WindowOption;
-}) {
-  const rows = useMemo(
-    () =>
-      chartRows(series, ["requests_running", "requests_waiting"], window),
-    [series, window]
-  );
-  const stats = useMemo(
-    () => coverage(rows, "requests_running"),
-    [rows]
-  );
-
-  return (
-    <article className="chart-panel request-load-chart">
-      <header className="chart-panel-head">
-        <div>
-          <span>REQUESTS</span>
-          <h4>Running and waiting</h4>
-        </div>
-        <div className="chart-legend">
-          <span><i className="legend-light" />Running</span>
-          <span><i className="legend-amber" />Waiting</span>
-        </div>
-      </header>
-      <div className="chart-body">
-        {stats.valid >= 2 ? (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={rows}
-              margin={{ top: 14, right: 10, bottom: 4, left: -16 }}
-            >
-              <CartesianGrid stroke="#20272c" vertical={false} />
-              <XAxis
-                dataKey="time"
-                tickLine={false}
-                axisLine={false}
-                minTickGap={70}
-                tick={{ fill: "#6f7a84", fontSize: 10 }}
-              />
-              <YAxis
-                allowDecimals={false}
-                tickLine={false}
-                axisLine={false}
-                width={54}
-                tick={{ fill: "#6f7a84", fontSize: 10 }}
-              />
-              <Tooltip contentStyle={tooltipStyle} />
-              <Line
-                type="stepAfter"
-                dataKey="requests_running"
-                name="Running"
-                stroke="#edf2f4"
-                strokeWidth={1.75}
-                dot={false}
-                connectNulls={false}
-                isAnimationActive={false}
-              />
-              <Line
-                type="stepAfter"
-                dataKey="requests_waiting"
-                name="Waiting"
-                stroke="#e7b978"
-                strokeWidth={1.75}
-                dot={false}
-                connectNulls={false}
-                isAnimationActive={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        ) : (
-          <EmptyChart label="Awaiting request gauge history" />
-        )}
-      </div>
-      <Coverage {...stats} />
-    </article>
-  );
-}
-
-export function ErrorChart({ models }: { models: OverviewItem[] }) {
-  const data = models.map((model) => ({
-    alias: model.alias,
-    service: model.error_statistics_24h.service_failures,
-    transport: model.error_statistics_24h.transport_unconfirmed,
-    measurement: model.error_statistics_24h.measurement_errors
-  }));
-  const total = data.reduce(
-    (sum, row) => sum + row.service + row.transport + row.measurement,
-    0
-  );
-
-  return (
-    <article className="chart-panel error-chart">
-      <header className="chart-panel-head">
-        <div>
-          <span>LAST 24 HOURS</span>
-          <h4>Errors by deployment</h4>
-        </div>
-        <strong>{total}<small>recorded</small></strong>
-      </header>
-      <div className="chart-body">
-        {total > 0 ? (
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={data}
-              margin={{ top: 14, right: 8, bottom: 4, left: -22 }}
-            >
-              <CartesianGrid stroke="#20272c" vertical={false} />
-              <XAxis
-                dataKey="alias"
-                tickLine={false}
-                axisLine={false}
-                interval={0}
-                tick={{ fill: "#6f7a84", fontSize: 9 }}
-                tickFormatter={(value: string) => value.split("-")[0]}
-              />
-              <YAxis
-                allowDecimals={false}
-                tickLine={false}
-                axisLine={false}
-                tick={{ fill: "#6f7a84", fontSize: 10 }}
-              />
-              <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey="service" name="Service" stackId="a" fill="#f07872" />
-              <Bar
-                dataKey="transport"
-                name="Transport"
-                stackId="a"
-                fill="#e7b978"
-              />
-              <Bar
-                dataKey="measurement"
-                name="Measurement"
-                stackId="a"
-                fill="#9384c8"
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <EmptyChart label="No errors recorded in the last 24 hours" />
-        )}
-      </div>
     </article>
   );
 }

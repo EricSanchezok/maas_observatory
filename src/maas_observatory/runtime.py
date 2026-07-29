@@ -1,9 +1,11 @@
-"""Single-process lifecycle for the API and all critical background tasks."""
+"""Single-process lifecycle for the API and response-check workers."""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -17,7 +19,6 @@ from maas_common.catalog import (
     load_model_catalog,
 )
 from maas_observatory.api import RuntimeHealth, create_app
-from maas_observatory.collector import RollupEngine, VLLMMetricsCollector
 from maas_observatory.database import Database
 from maas_observatory.probes import ProbeRunner, ProbeScheduler, profile_definitions
 from maas_observatory.settings import (
@@ -26,6 +27,8 @@ from maas_observatory.settings import (
     load_observability_settings,
 )
 from maas_observatory.state import StateEngine
+
+LOGGER = logging.getLogger("maas_observatory")
 
 
 async def maintenance_loop(database: Database, stop: asyncio.Event) -> None:
@@ -91,7 +94,10 @@ async def serve(
     database = Database(settings.storage)
     health = RuntimeHealth()
     try:
-        await database.migrate()
+        await database.migrate(
+            collection_mode=settings.collection_mode,
+            suite_version=settings.experience.suite_version,
+        )
         ok, detail = await database.quick_check()
     except Exception as exc:
         health.detail = f"database_startup_failed:{type(exc).__name__}"
@@ -106,34 +112,24 @@ async def serve(
 
     stop = asyncio.Event()
     app = create_app(database, catalog, settings, health)
-    async with (
-        VLLMMetricsCollector(
-            catalog,
-            settings.scrape,
-            database,
-            settings.metrics_sources,
-        ) as collector,
-        ProbeRunner(
-            catalog,
-            settings.probes,
-            settings.profiles,
-            database,
-            settings.experience,
-        ) as probe_runner,
-    ):
+    async with ProbeRunner(
+        catalog,
+        settings.probes,
+        settings.profiles,
+        database,
+        settings.experience,
+        settings.collection_mode,
+    ) as probe_runner:
         scheduler = ProbeScheduler(probe_runner, database)
-        rollups = RollupEngine(
-            database, p95_min_samples=settings.scrape.p95_min_samples
-        )
-        states = StateEngine(catalog, settings.state, database)
+        states = StateEngine(catalog, settings, database)
         writer = asyncio.create_task(database.writer_loop(), name="sqlite-writer")
         try:
             await database.wait_writer()
             await database.synchronize_catalog(catalog)
-            await database.synchronize_metrics_sources(
-                catalog, settings.metrics_sources
-            )
             for definition in profile_definitions(settings.experience):
+                fixture_digest = hashlib.sha256(
+                    json.dumps(definition["fixtures"], sort_keys=True).encode()
+                ).hexdigest()
                 await database.write(
                     """
                     INSERT OR IGNORE INTO experience_profiles(
@@ -144,29 +140,21 @@ async def serve(
                     (
                         definition["profile_id"],
                         definition["definition_version"],
-                        definition["fixture_sha256"],
+                        fixture_digest,
                         json.dumps(definition, sort_keys=True),
                         datetime.now(UTC).isoformat(),
                     ),
                 )
             health.ready = True
             health.detail = "ready"
+            LOGGER.warning(
+                "collection mode=%s; rapid mode has no automatic request cap",
+                settings.collection_mode,
+            )
             async with asyncio.TaskGroup() as tasks:
                 tasks.create_task(_watch_writer(writer, stop), name="writer-supervisor")
-                tasks.create_task(collector.run(stop), name="metrics-collector")
-                tasks.create_task(
-                    rollups.run(
-                        stop, [item.deployment_id for item in catalog.deployments]
-                    ),
-                    name="rollups",
-                )
                 tasks.create_task(scheduler.route_loop(stop), name="route-liveness")
-                tasks.create_task(
-                    scheduler.speed_loop(stop), name="interactive-experience"
-                )
-                tasks.create_task(
-                    scheduler.context_loop(stop), name="context-experience"
-                )
+                tasks.create_task(scheduler.response_loop(stop), name="response-checks")
                 tasks.create_task(
                     scheduler.confirmation_loop(stop), name="confirmation"
                 )
