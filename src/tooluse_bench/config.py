@@ -2,49 +2,38 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel
 
+from maas_common.catalog import (
+    DEFAULT_CATALOG,
+    DEFAULT_DOTENV,
+    PROJECT_ROOT,
+    load_dotenv,
+    load_model_catalog,
+)
 from tooluse_bench.baselines import BaselineRegistry
 from tooluse_bench.domain import ExperimentPlan, ModelCatalog, ModelDeployment
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CATALOG = PROJECT_ROOT / "config" / "models.yaml"
 DEFAULT_BASELINES = PROJECT_ROOT / "config" / "baselines.yaml"
 DEFAULT_EXPERIMENT = PROJECT_ROOT / "config" / "experiments" / "release-v1.yaml"
-DEFAULT_DOTENV = PROJECT_ROOT / ".env"
 
-
-def load_dotenv(path: Path = DEFAULT_DOTENV) -> None:
-    """Load the conservative KEY=VALUE subset used by this project.
-
-    Existing process environment values always win. Export syntax, interpolation,
-    multiline values, and command substitution are intentionally unsupported.
-    """
-
-    if not path.exists():
-        return
-
-    for line_number, raw_line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            raise ValueError(f"{path}:{line_number}: expected KEY=VALUE")
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key or not key.replace("_", "A").isalnum() or not key[0].isalpha():
-            raise ValueError(f"{path}:{line_number}: invalid environment name")
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
+__all__ = [
+    "DEFAULT_BASELINES",
+    "DEFAULT_CATALOG",
+    "DEFAULT_DOTENV",
+    "DEFAULT_EXPERIMENT",
+    "PROJECT_ROOT",
+    "load_baselines",
+    "load_catalog",
+    "load_dotenv",
+    "load_experiment",
+    "load_model_catalog",
+    "resolve_models",
+]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -61,10 +50,6 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 def _validate_yaml[SchemaT: BaseModel](path: Path, schema: type[SchemaT]) -> SchemaT:
     return schema.model_validate(_load_yaml(path))
-
-
-def load_model_catalog(path: Path = DEFAULT_CATALOG) -> ModelCatalog:
-    return _validate_yaml(path, ModelCatalog)
 
 
 def load_experiment(path: Path = DEFAULT_EXPERIMENT) -> ExperimentPlan:

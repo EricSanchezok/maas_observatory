@@ -172,6 +172,7 @@
       "type": "object"
     },
     "Precision": {
+      "description": "Deployment precision names accepted by the catalog.",
       "enum": [
         "BF16",
         "FP8-mixed",

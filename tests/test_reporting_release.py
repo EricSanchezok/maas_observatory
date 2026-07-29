@@ -50,7 +50,7 @@ from tooluse_bench.store import RunStore, sha256_file
 from tooluse_bench.visualization import FigureMetadata
 
 RUN_ID = "run-report-test"
-DEPLOYMENT_ID = "sii-holos-deepseek-v4-pro-w4a8"
+DEPLOYMENT_ID = "maas-deepseek-v4-pro-w4a8"
 
 
 def baseline_registry(

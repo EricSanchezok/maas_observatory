@@ -2,9 +2,14 @@
 
 调研日期：2026-07-28
 
+> 本文保留广义技术调研、术语和测量边界。MaaS Observatory 实时数据采集、
+> 指标优先级、公开 API 和前端数据合同以
+> [MaaS Observatory 数据后端服务设计](observability-data-backend-design.md)
+> 为准。实时观测站不包含 Benchmark、受控容量实验或对应入口。
+
 ## 范围
 
-本文记录面向当前 9 个 SII Holos 模型部署建设状态网站时采用的指标定义、数据来源、
+本文记录面向当前 9 个模型部署建设状态网站时采用的指标定义、数据来源、
 采样策略和展示约束。目标是同时满足：
 
 1. 持续观察端点可达性、生成可用性、延迟、错误和资源状态；
@@ -597,18 +602,6 @@ HTTP 200 但内容无效属于显式错误观测，不能只按 status code 统�
 - run configuration 和 immutable artifact link；
 - 与上次同配置运行的差异。
 
-#### Tool-use benchmark
-
-Benchmark 分数可以在同一网站提供入口，但必须单独页面和数据源展示：
-
-- benchmark/version/profile；
-- run completion；
-- score、reliability 和 error taxonomy；
-- official baseline comparability；
-- run date 和 artifact provenance。
-
-实时 serving 指标不能和 benchmark score 合成单一排名。
-
 ## 每个公开数值的最小元数据
 
 网站 API 返回的 metric point 或 aggregate 至少包含：
@@ -759,14 +752,6 @@ Prometheus 或兼容时序数据库适合 counter、gauge 和 histogram。事件
 3. 为每项数据展示 source、window、sample count 和 freshness；
 4. 加入 stale/unknown/maintenance，不把 missing 显示为 healthy；
 5. 加入 metric-definition changelog。
-
-### Phase 4：Controlled performance history
-
-1. 定义固定 ISL/OSL 和 reasoning profiles；
-2. 建立预约、stop condition 和资源预算；
-3. 生成 versioned capacity run；
-4. 网站只读取验证过的 immutable summary；
-5. benchmark 分数继续通过独立发布流程进入网站。
 
 ## 上线前检查清单
 

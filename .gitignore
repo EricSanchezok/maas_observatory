@@ -13,6 +13,9 @@ __pycache__/
 .coverage.*
 coverage.xml
 htmlcov/
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
 
 build/
 dist/
@@ -22,5 +25,6 @@ runs/
 benchmark-worktrees/
 release-staging/
 site/
+/var/
 
 .DS_Store

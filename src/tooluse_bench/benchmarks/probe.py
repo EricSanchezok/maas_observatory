@@ -248,7 +248,7 @@ class ProbeAdapter(BenchmarkAdapter):
             benchmark_id="probe",
             display_name="SII Native Tool-calling Protocol Probe",
             version="1.1.0",
-            source_url="https://github.com/sii-holos/tool-use",
+            source_url="https://github.com/maas-observatory/tool-use",
             revision="probe-v1.1",
             hermetic_default=True,
             supported_profiles=("full",),

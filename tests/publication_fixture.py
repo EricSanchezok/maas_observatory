@@ -21,7 +21,7 @@ from tooluse_bench.reporting import build_report
 from tooluse_bench.store import RunStore
 
 RUN_ID = "publication-fixture"
-DEPLOYMENT_ID = "sii-holos-deepseek-v4-pro-w4a8"
+DEPLOYMENT_ID = "maas-deepseek-v4-pro-w4a8"
 
 
 def create_populated_public_results(root: Path) -> Path:

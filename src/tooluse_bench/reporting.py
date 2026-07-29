@@ -492,7 +492,7 @@ def render_markdown_report(
     metadata: ReportMetadata,
 ) -> str:
     lines = [
-        f"# SII Holos Tool-use Evaluation — `{manifest.run_id}`",
+        f"# MaaS Tool-use Evaluation — `{manifest.run_id}`",
         "",
         "## Provenance",
         "",
@@ -642,7 +642,7 @@ def render_markdown_report(
             "",
             "- Transport and infrastructure errors are retained; they are never "
             "dropped.",
-            "- Quantized SII Holos deployments are not assumed equivalent to "
+            "- Quantized local deployments are not assumed equivalent to "
             "upstream releases.",
             "- Toolathlon-Verified and pre-Verified Toolathlon are separate "
             "score series.",

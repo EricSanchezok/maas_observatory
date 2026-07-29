@@ -1,7 +1,11 @@
-# SII Holos Tool-use Bench
+# MaaS Observatory
 
-This project evaluates SII Holos model deployments through the
-OpenAI-compatible tool-calling protocol and longer agent workflows.
+This repository contains two independent applications for OpenAI-compatible
+MaaS deployments:
+
+1. `maas_observatory` provides low-impact operational telemetry and a public,
+   read-only API;
+2. `tooluse_bench` runs offline, reproducible tool-use evaluations.
 
 The evaluation reports three dimensions separately:
 
@@ -17,4 +21,9 @@ Start with the [methodology](methodology.md), then follow the
 [reproducibility guide](reproducibility.md). The
 [service observability research](service-observability.md) defines the
 low-impact monitoring, latency, throughput, and capacity-measurement model for
-the configured deployments.
+the configured deployments. The
+[MaaS Observatory data backend design](observability-data-backend-design.md)
+defines the authoritative priorities, collection policy, public API, and
+frontend data contract for the real-time observability site.
+The [operations guide](maas-observatory-operations.md) documents the implemented
+CLI, storage lifecycle, deployment model, public endpoints, and recovery steps.

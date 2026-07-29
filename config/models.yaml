@@ -4,10 +4,10 @@ defaults:
   timeout_seconds: 600
 
 deployments:
-  - deployment_id: sii-holos-deepseek-v4-pro-w4a8
+  - deployment_id: maas-deepseek-v4-pro-w4a8
     alias: deepseek-v4-pro
-    name: SII Holos · DeepSeek V4 Pro (W4A8)
-    provider: SII Holos
+    name: DeepSeek V4 Pro (W4A8)
+    provider: Academy MaaS
     family: deepseek-v4
     upstream_model: DeepSeek-V4-Pro
     upstream_source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
@@ -34,10 +34,10 @@ deployments:
           chat_template_kwargs:
             thinking: true
 
-  - deployment_id: sii-holos-deepseek-v4-flash-w8a8
+  - deployment_id: maas-deepseek-v4-flash-w8a8
     alias: deepseek-v4-flash
-    name: SII Holos · DeepSeek V4 Flash (W8A8)
-    provider: SII Holos
+    name: DeepSeek V4 Flash (W8A8)
+    provider: Academy MaaS
     family: deepseek-v4
     upstream_model: DeepSeek-V4-Flash
     upstream_source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
@@ -64,10 +64,10 @@ deployments:
           chat_template_kwargs:
             thinking: true
 
-  - deployment_id: sii-holos-glm-5-2-w4a8
+  - deployment_id: maas-glm-5-2-w4a8
     alias: glm-5.2
-    name: SII Holos · GLM 5.2 (W4A8)
-    provider: SII Holos
+    name: GLM 5.2 (W4A8)
+    provider: Academy MaaS
     family: glm
     upstream_model: GLM-5.2
     upstream_source: https://huggingface.co/zai-org/GLM-5.2
@@ -94,10 +94,10 @@ deployments:
           chat_template_kwargs:
             enable_thinking: false
 
-  - deployment_id: sii-holos-qwen3-6-27b-bf16
+  - deployment_id: maas-qwen3-6-27b-bf16
     alias: qwen3.6-27b
-    name: SII Holos · Qwen 3.6 27B (BF16)
-    provider: SII Holos
+    name: Qwen 3.6 27B (BF16)
+    provider: Academy MaaS
     family: qwen
     upstream_model: Qwen3.6-27B
     upstream_source: https://huggingface.co/Qwen/Qwen3.6-27B
@@ -124,10 +124,10 @@ deployments:
           chat_template_kwargs:
             enable_thinking: false
 
-  - deployment_id: sii-holos-kimi-k2-6-w4a8
+  - deployment_id: maas-kimi-k2-6-w4a8
     alias: kimi-k2.6
-    name: SII Holos · Kimi K2.6 (W4A8)
-    provider: SII Holos
+    name: Kimi K2.6 (W4A8)
+    provider: Academy MaaS
     family: kimi-k2
     upstream_model: Kimi-K2.6
     upstream_source: https://huggingface.co/moonshotai/Kimi-K2.6
@@ -154,10 +154,10 @@ deployments:
           chat_template_kwargs:
             thinking: false
 
-  - deployment_id: sii-holos-minimax-m2-7-w8a8
+  - deployment_id: maas-minimax-m2-7-w8a8
     alias: minimax-m2.7
-    name: SII Holos · MiniMax M2.7 (W8A8)
-    provider: SII Holos
+    name: MiniMax M2.7 (W8A8)
+    provider: Academy MaaS
     family: minimax-m2
     upstream_model: MiniMax-M2.7
     upstream_source: https://huggingface.co/MiniMaxAI/MiniMax-M2.7
@@ -179,10 +179,10 @@ deployments:
       reasoning_parser: unknown
       tool_call_parser: unknown
 
-  - deployment_id: sii-holos-mimo-v2-5-pro-w8a8
+  - deployment_id: maas-mimo-v2-5-pro-w8a8
     alias: mimo-v2.5-pro
-    name: SII Holos · MiMo V2.5 Pro (W8A8)
-    provider: SII Holos
+    name: MiMo V2.5 Pro (W8A8)
+    provider: Academy MaaS
     family: mimo-v2
     upstream_model: MiMo-V2.5-Pro
     upstream_source: https://huggingface.co/XiaomiMiMo/MiMo-V2.5-Pro
@@ -204,10 +204,10 @@ deployments:
       reasoning_parser: mimo
       tool_call_parser: mimo
 
-  - deployment_id: sii-holos-nex-n2-pro-w8a8
+  - deployment_id: maas-nex-n2-pro-w8a8
     alias: nex-n2-pro-w8a8
-    name: SII Holos · Nex N2 Pro (W8A8)
-    provider: SII Holos
+    name: Nex N2 Pro (W8A8)
+    provider: Academy MaaS
     family: nex-n2
     upstream_model: Nex-N2-Pro
     upstream_source: https://huggingface.co/nex-agi/Nex-N2-Pro
@@ -229,10 +229,10 @@ deployments:
       reasoning_parser: unknown
       tool_call_parser: unknown
 
-  - deployment_id: sii-holos-nex-n2-pro-bf16
+  - deployment_id: maas-nex-n2-pro-bf16
     alias: nex-n2-pro-bf16
-    name: SII Holos · Nex N2 Pro (BF16)
-    provider: SII Holos
+    name: Nex N2 Pro (BF16)
+    provider: Academy MaaS
     family: nex-n2
     upstream_model: Nex-N2-Pro
     upstream_source: https://huggingface.co/nex-agi/Nex-N2-Pro

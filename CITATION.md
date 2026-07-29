@@ -6,7 +6,7 @@ the GitHub Release tag, archive checksum, run ID, and access date.
 
 Recommended fields:
 
-- title: *SII Holos Tool-use Bench*;
+- title: *MaaS Observatory*;
 - version or Git commit;
 - run ID and benchmark release;
 - repository or GitHub Release URL;

@@ -1,11 +1,12 @@
-# SII Holos Tool-use Bench
+# MaaS Observatory
 
 [![License: Apache-2.0](https://img.shields.io/badge/code-Apache--2.0-blue.svg)](LICENSE)
 [![Data: CC BY 4.0](https://img.shields.io/badge/data-CC%20BY%204.0-lightgrey.svg)](LICENSE-DATA)
 
-A reproducible evaluation harness for tool use on OpenAI-compatible model
-deployments operated by SII Holos. It separates transport and protocol failures
-from function-calling accuracy and end-to-end agent performance.
+An open, reproducible repository for observing OpenAI-compatible MaaS
+deployments and evaluating tool use. The real-time `maas_observatory` service
+and the offline `tooluse_bench` runner are independent applications; they share
+only the validated model catalog and neutral configuration primitives.
 
 > Project status: the harness and release pipeline are under active validation.
 > No public model score is claimed until a signed-off release bundle is linked
@@ -15,6 +16,24 @@ from function-calling accuracy and end-to-end agent performance.
 [Methodology](docs/methodology.md) ·
 [Reproducibility](docs/reproducibility.md) ·
 [Benchmark research](docs/benchmark-research.md)
+
+[Observatory operations](docs/maas-observatory-operations.md) ·
+[Observatory backend design](docs/observability-data-backend-design.md)
+
+## Real-time observatory
+
+Build the React interface, then start the single-process service:
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run build
+uv run maas-observatory serve
+```
+
+Open `http://127.0.0.1:8080/`. FastAPI serves the compiled interface and the
+read-only API from the same origin. For interface development, run
+`npm --prefix frontend run dev`; Vite listens on port 5173 and proxies API
+requests to port 8080.
 
 ## Scope
 
@@ -148,10 +167,13 @@ upstream score as if they were the same experiment.
 ## Development
 
 ```bash
+npm --prefix frontend ci
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
 uv run ruff format --check src tests scripts benchmark-envs/*/*.py
 uv run ruff check src tests scripts benchmark-envs/*/*.py
 uv run mypy src benchmark-envs/bfcl/normalize.py
-uv run pytest --cov=tooluse_bench --cov-report=term-missing
+uv run pytest --cov --cov-report=term-missing
 uv run python scripts/check_schemas.py
 uv run python scripts/check_public_results.py
 uv run python scripts/check_links.py

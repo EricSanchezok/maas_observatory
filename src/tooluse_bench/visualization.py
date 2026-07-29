@@ -412,7 +412,7 @@ def build_benchmark_figure(
         {
             "font.family": "DejaVu Sans",
             "svg.fonttype": "none",
-            "svg.hashsalt": "sii-tooluse-bench-v1",
+            "svg.hashsalt": "maas-observatory-v1",
             "axes.unicode_minus": False,
         }
     )
@@ -431,7 +431,7 @@ def build_benchmark_figure(
     figure.text(
         0.075,
         0.955,
-        "SII Holos tool-use evaluation",
+        "MaaS tool-use evaluation",
         fontsize=23,
         fontweight="bold",
         color=INK,
@@ -537,13 +537,13 @@ def build_benchmark_figure(
     figure.savefig(
         svg_path,
         format="svg",
-        metadata={"Date": None, "Creator": "sii-tooluse-bench"},
+        metadata={"Date": None, "Creator": "maas-observatory"},
     )
     figure.savefig(
         png_path,
         format="png",
         dpi=180,
-        metadata={"Software": "sii-tooluse-bench"},
+        metadata={"Software": "maas-observatory"},
     )
     plt.close(figure)
 

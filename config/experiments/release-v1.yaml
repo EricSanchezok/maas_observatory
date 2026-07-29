@@ -1,6 +1,6 @@
 schema_version: 1
 experiment_id: release-v1
-description: First public SII Holos tool-use evaluation.
+description: First public MaaS tool-use evaluation.
 models: ["*"]
 lanes: [standardized, official-reproduction]
 output_root: runs

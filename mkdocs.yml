@@ -1,5 +1,5 @@
-site_name: SII Holos Tool-use Bench
-site_description: Reproducible tool-use evaluation for SII Holos deployments
+site_name: MaaS Observatory
+site_description: Reproducible model-serving observability
 theme:
   name: material
   features:
@@ -9,6 +9,8 @@ nav:
   - Home: index.md
   - Methodology: methodology.md
   - Service observability: service-observability.md
+  - Observability data backend: observability-data-backend-design.md
+  - Observatory operations: maas-observatory-operations.md
   - Reproducibility: reproducibility.md
   - Results: results.md
   - Baselines: official-baseline-matrix.md

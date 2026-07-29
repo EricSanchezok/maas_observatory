@@ -1,6 +1,7 @@
-# SII Holos Tool-use Bench
+# MaaS Observatory
 
-这是一个面向 SII Holos 自部署模型的可复现工具调用评测框架。框架分别记录：
+这是一个面向 OpenAI-compatible MaaS 部署的实时观测与可复现工具调用评测项目。
+实时观测服务与离线评测 runner 相互独立，并分别记录：
 
 - endpoint、鉴权或超时等传输问题；
 - OpenAI `message.tool_calls` 协议不兼容；
@@ -11,6 +12,18 @@
 每个任务重复 3 次；用于官方口径对照的 BFCL 主结果执行一次完整评测，重复性另行
 测量。报告按适用范围给出 Pass@1、Pass@3、Pass^3、置信区间、错误分类、延迟与
 调用效率。不同 benchmark 的分数保持独立。
+
+## 实时观测界面
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run build
+uv run maas-observatory serve
+```
+
+打开 `http://127.0.0.1:8080/`。生产模式下 FastAPI 同源提供前端与公开只读 API；
+开发前端时可另行运行 `npm --prefix frontend run dev`，Vite 会把 API 请求代理到
+8080 端口。
 
 ## 快速开始
 

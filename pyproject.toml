@@ -3,18 +3,22 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "sii-tooluse-bench"
+name = "maas-observatory"
 version = "0.3.0"
-description = "Reproducible tool-use evaluation for SII Holos OpenAI-compatible deployments"
+description = "Low-impact MaaS observability and reproducible tool-use evaluation"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 dependencies = [
+  "aiosqlite>=0.21,<1",
+  "fastapi>=0.116,<1",
   "httpx>=0.28.1,<1",
   "matplotlib>=3.10,<4",
+  "prometheus-client>=0.22,<1",
   "pydantic>=2.11,<3",
   "PyYAML>=6.0.2,<7",
   "typer>=0.16,<1",
+  "uvicorn>=0.35,<1",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +37,7 @@ dev = [
 
 [project.scripts]
 tooluse-bench = "tooluse_bench.cli:app"
+maas-observatory = "maas_observatory.cli:app"
 
 [project.entry-points."tooluse_bench.benchmarks"]
 probe = "tooluse_bench.benchmarks.probe:ProbeAdapter"
@@ -43,7 +48,7 @@ toolathlon-verified = "tooluse_bench.benchmarks.toolathlon:ToolathlonAdapter"
 managed = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tooluse_bench"]
+packages = ["src/maas_common", "src/maas_observatory", "src/tooluse_bench"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
@@ -51,7 +56,12 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["tooluse_bench"]
+source = ["maas_common", "maas_observatory", "tooluse_bench"]
+omit = [
+  "src/**/__main__.py",
+  "src/maas_observatory/cli.py",
+  "src/maas_observatory/runtime.py",
+]
 
 [tool.coverage.report]
 fail_under = 90
@@ -60,7 +70,7 @@ show_missing = true
 [tool.mypy]
 python_version = "3.12"
 strict = true
-packages = ["tooluse_bench"]
+packages = ["maas_common", "maas_observatory", "tooluse_bench"]
 
 [[tool.mypy.overrides]]
 module = ["evalscope.*"]
