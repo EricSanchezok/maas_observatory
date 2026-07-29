@@ -60,9 +60,9 @@ def test_suite_fixtures_nonce_and_balanced_order() -> None:
     catalog = configured_catalog()
     short_id, short = fixture_prompt(ProbeKind.EXPERIENCE_SHORT, 0, "abc")
     long_id, long_prompt = fixture_prompt(ProbeKind.EXPERIENCE_CONTEXT, 0, "abc")
-    assert short_id == "short-01"
+    assert short_id == "response-01"
     assert "abc" in short[:40]
-    assert long_id == "context-01"
+    assert long_id == "response-04"
     assert len(long_prompt.encode()) == 16 * 1024
     assert "abc" in long_prompt[:40]
     hashes = fixture_hashes()
@@ -79,10 +79,8 @@ def test_suite_fixtures_nonce_and_balanced_order() -> None:
         item.deployment_id for item in catalog.deployments
     }
     definitions = profile_definitions(make_settings(Path("/tmp")).experience)
-    assert {item["kind"] for item in definitions} == {
-        "interactive_short",
-        "context_16k",
-    }
+    assert {item["kind"] for item in definitions} == {"balanced_response"}
+    assert len(definitions[0]["fixtures"]) == 6
 
 
 def test_error_classification() -> None:
@@ -134,7 +132,7 @@ def test_streaming_measurements_use_visible_content_and_reported_usage(
             result = await runner.generation(
                 deployment,
                 ProbeKind.EXPERIENCE_SHORT,
-                fixture_id="short-01",
+                fixture_id="response-01",
                 prompt="test",
                 block_id="block",
             )
@@ -186,7 +184,7 @@ def test_usage_missing_only_makes_output_speed_unavailable(tmp_path: Path) -> No
             result = await runner.generation(
                 catalog.deployments[0],
                 ProbeKind.EXPERIENCE_SHORT,
-                fixture_id="short-01",
+                fixture_id="response-01",
                 prompt="test",
             )
             assert result.outcome == ProbeOutcome.SUCCESS
@@ -318,7 +316,7 @@ def test_standard_budget_blocks_but_rapid_has_no_automatic_limit(
                 INSERT INTO budget_usage(
                     deployment_id, budget_date, short_requests,
                     context_requests, output_tokens
-                ) VALUES (?, ?, 2, 0, 0)
+                    ) VALUES (?, ?, 3, 0, 0)
                 """,
                 (deployment.deployment_id, datetime.now(UTC).date().isoformat()),
             )
@@ -326,7 +324,7 @@ def test_standard_budget_blocks_but_rapid_has_no_automatic_limit(
                 deployment, ProbeKind.EXPERIENCE_SHORT, prompt="test"
             )
             assert result.outcome == ProbeOutcome.SKIPPED
-            assert result.error_code == "daily_short_budget"
+            assert result.error_code == "daily_response_budget"
         finally:
             await close_database(database, writer)
 

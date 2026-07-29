@@ -41,7 +41,7 @@ profiles: {sample: default-only}
         "https://one.test",
         "https://two.test",
     ]
-    assert settings.interval_for(settings.experience.short_profile_id) == 120
+    assert settings.interval_for() == 60
     monkeypatch.setenv("MAAS_OBSERVATORY_COLLECTION_MODE", "fast")
     with pytest.raises(ValueError, match="rapid or standard"):
         load_observability_settings(config)

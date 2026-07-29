@@ -22,7 +22,10 @@ Avoid debug panels, dense infrastructure consoles, neon science-fiction styling,
 
 ## Design Principles
 
-- Lead with what a model user sees: first response, output speed, and total time.
+- Lead with what a model user sees: current availability, first response, and
+  output speed.
+- A failed latest request must never be masked by an older successful value.
+- Combine compact and extended inputs through one fixed, balanced sample suite.
 - State measurement limits through concise disclosure, not defensive copy.
 - Never display a value whose source or statistical boundary cannot be defended.
 - Use familiar product interactions and consistent language.

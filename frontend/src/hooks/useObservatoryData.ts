@@ -14,7 +14,6 @@ export interface DashboardData {
   catalog: Envelope<CatalogItem[]>;
   compare: Envelope<CompareItem[]>;
   experience: Envelope<ExperienceItem[]>;
-  contextExperience: Envelope<ExperienceItem[]>;
   events: Envelope<ObservatoryEvent[]>;
 }
 
@@ -25,8 +24,8 @@ export function useExperienceSeries(
   dataWindow: WindowOption,
   reloadToken: number
 ) {
-  const [shortSeries, setShortSeries] = useState<MetricSeries>(EMPTY_SERIES);
-  const [contextSeries, setContextSeries] = useState<MetricSeries>(EMPTY_SERIES);
+  const [responseSeries, setResponseSeries] =
+    useState<MetricSeries>(EMPTY_SERIES);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -36,28 +35,17 @@ export function useExperienceSeries(
     const load = async () => {
       setLoading(true);
       try {
-        const [shortResult, contextResult] = await Promise.all([
-          fetchExperienceSeries(
-            deploymentId,
-            "interactive-short-v2",
-            dataWindow,
-            controller.signal
-          ),
-          fetchExperienceSeries(
-            deploymentId,
-            "context-16k-v2",
-            dataWindow,
-            controller.signal
-          )
-        ]);
+        const result = await fetchExperienceSeries(
+          deploymentId,
+          dataWindow,
+          controller.signal
+        );
         if (alive) {
-          setShortSeries(shortResult);
-          setContextSeries(contextResult);
+          setResponseSeries(result);
         }
       } catch {
         if (alive && !controller.signal.aborted) {
-          setShortSeries(EMPTY_SERIES);
-          setContextSeries(EMPTY_SERIES);
+          setResponseSeries(EMPTY_SERIES);
         }
       } finally {
         if (alive) setLoading(false);
@@ -70,7 +58,7 @@ export function useExperienceSeries(
     };
   }, [dataWindow, deploymentId, reloadToken]);
 
-  return { shortSeries, contextSeries, loading };
+  return { responseSeries, loading };
 }
 
 export function useObservatoryData(dataWindow: WindowOption) {

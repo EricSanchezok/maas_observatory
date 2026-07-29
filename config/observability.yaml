@@ -22,11 +22,9 @@ probes:
   short_max_output_tokens: 64
   context_max_output_tokens: 128
   rapid_block_interval_seconds: 60
-  standard_short_interval_seconds: 600
-  standard_context_interval_seconds: 900
+  standard_block_interval_seconds: 360
   standard_budget:
-    short_requests: 144
-    context_requests: 96
+    response_requests: 240
     output_tokens: 21504
 
 profiles:
@@ -42,10 +40,8 @@ profiles:
 
 experience:
   vantage_id: observatory-primary
-  suite_version: response-suite-v2
-  short_profile_id: interactive-short-v2
-  context_profile_id: context-16k-v2
-  definition_version: "2"
-  summary_min_samples: 3
-  tail_quantile_min_samples: 10
+  suite_version: response-suite-v3
+  response_profile_id: response-v3
+  definition_version: "3"
+  summary_min_samples: 6
   baseline_min_samples: 20

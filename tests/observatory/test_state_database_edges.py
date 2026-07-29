@@ -112,7 +112,7 @@ def test_route_confirmation_failure_marks_unavailable(tmp_path: Path) -> None:
             )
             state, reasons, _, _ = await engine.evaluate(deployment_id)
             assert state == ResponseState.UNAVAILABLE
-            assert reasons == ["confirmed_request_failure"]
+            assert reasons == ["route_failed"]
         finally:
             await close_database(database, writer)
 
@@ -138,7 +138,6 @@ def test_regression_detection_deduplication_and_evaluate_all(
                     measurement={
                         "first_response_seconds": 1.0,
                         "output_speed_tps": 20.0,
-                        "total_time_seconds": 2.0,
                     },
                 )
             for index in range(2):
@@ -149,14 +148,12 @@ def test_regression_detection_deduplication_and_evaluate_all(
                     measurement={
                         "first_response_seconds": 4.0,
                         "output_speed_tps": 5.0,
-                        "total_time_seconds": 6.0,
                     },
                 )
             regressions = await engine._regression(deployment_id)
             assert set(regressions) == {
                 "first_response_seconds_regression",
                 "output_speed_tps_regression",
-                "total_time_seconds_regression",
             }
             await engine._persist_regression(deployment_id, regressions)
             await engine._persist_regression(deployment_id, regressions)

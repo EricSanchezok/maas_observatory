@@ -149,7 +149,7 @@ Use a conventional sticky top bar. Links are concise, sentence case, and use cle
 
 ### Response Metric
 
-Pair a plain-language label, tabular number, unit, recent sample time, and an optional trend. Method definitions live in a shared disclosure rather than repeated card prose.
+Pair a plain-language label, tabular number, unit, recent sample time, and an optional trend. Live cards show only the latest completed request; window summaries show the arithmetic mean across the fixed six-fixture suite. Method definitions live in a shared disclosure rather than repeated card prose.
 
 ## Do's and Don'ts
 

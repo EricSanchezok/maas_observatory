@@ -34,8 +34,7 @@ class StorageSettings(StrictModel):
 
 
 class StandardBudget(StrictModel):
-    short_requests: int = Field(default=144, ge=0)
-    context_requests: int = Field(default=96, ge=0)
+    response_requests: int = Field(default=240, ge=0)
     output_tokens: int = Field(default=21504, ge=0)
 
 
@@ -47,19 +46,16 @@ class ProbeSettings(StrictModel):
     short_max_output_tokens: int = Field(default=64, ge=2)
     context_max_output_tokens: int = Field(default=128, ge=2)
     rapid_block_interval_seconds: int = Field(default=60, ge=10)
-    standard_short_interval_seconds: int = Field(default=600, ge=60)
-    standard_context_interval_seconds: int = Field(default=900, ge=60)
+    standard_block_interval_seconds: int = Field(default=360, ge=60)
     standard_budget: StandardBudget = Field(default_factory=StandardBudget)
 
 
 class ExperienceSettings(StrictModel):
     vantage_id: str = Field(default="observatory-primary", min_length=1)
-    suite_version: str = "response-suite-v2"
-    short_profile_id: str = "interactive-short-v2"
-    context_profile_id: str = "context-16k-v2"
-    definition_version: str = "2"
-    summary_min_samples: int = Field(default=3, ge=3)
-    tail_quantile_min_samples: int = Field(default=10, ge=3)
+    suite_version: str = "response-suite-v3"
+    response_profile_id: str = "response-v3"
+    definition_version: str = "3"
+    summary_min_samples: int = Field(default=6, ge=6)
     baseline_min_samples: int = Field(default=20, ge=3)
 
 
@@ -72,12 +68,10 @@ class ObservatorySettings(StrictModel):
     experience: ExperienceSettings = Field(default_factory=ExperienceSettings)
     collection_mode: CollectionMode = "standard"
 
-    def interval_for(self, profile_id: str) -> int:
+    def interval_for(self) -> int:
         if self.collection_mode == "rapid":
-            return self.probes.rapid_block_interval_seconds * 2
-        if profile_id == self.experience.context_profile_id:
-            return self.probes.standard_context_interval_seconds
-        return self.probes.standard_short_interval_seconds
+            return self.probes.rapid_block_interval_seconds
+        return self.probes.standard_block_interval_seconds
 
 
 def load_observability_settings(

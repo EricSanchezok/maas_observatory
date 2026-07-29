@@ -27,17 +27,17 @@ CANARY_PROMPT = "Return exactly the lowercase word ok."
 
 SHORT_TEMPLATES = (
     (
-        "short-01",
+        "response-01",
         "Check {nonce}. Explain in plain language why a monitoring request should "
         "be small and repeatable. Use complete sentences and no lists.",
     ),
     (
-        "short-02",
+        "response-02",
         "Check {nonce}. Describe how queueing can change the time a person waits "
         "for a model response. Use concise plain text and no headings.",
     ),
     (
-        "short-03",
+        "response-03",
         "Check {nonce}. Explain why response speed and model quality are different "
         "measurements. Use complete sentences and no lists.",
     ),
@@ -45,17 +45,17 @@ SHORT_TEMPLATES = (
 
 LONG_SEEDS = (
     (
-        "context-01",
+        "response-04",
         "A scheduled measurement records request timing, output events, and reported "
         "token usage without retaining content. ",
     ),
     (
-        "context-02",
+        "response-05",
         "A reproducible response check uses fixed request shapes, transparent "
         "profiles, and one observer location. ",
     ),
     (
-        "context-03",
+        "response-06",
         "A low-concurrency monitor separates transport failures, service failures, "
         "and measurement limitations. ",
     ),
@@ -124,29 +124,29 @@ def profile_definitions(settings: ExperienceSettings) -> list[dict[str, Any]]:
     hashes = fixture_hashes()
     return [
         {
-            "profile_id": settings.short_profile_id,
+            "profile_id": settings.response_profile_id,
             "definition_version": settings.definition_version,
             "suite_version": settings.suite_version,
-            "kind": "interactive_short",
+            "kind": "balanced_response",
             "streaming": True,
             "temperature": 0,
-            "configured_max_output_tokens": 64,
             "fixtures": [
-                {"fixture_id": fixture_id, "sha256": hashes[fixture_id]}
+                {
+                    "fixture_id": fixture_id,
+                    "input_shape": "compact",
+                    "configured_max_output_tokens": 64,
+                    "sha256": hashes[fixture_id],
+                }
                 for fixture_id, _ in SHORT_TEMPLATES
-            ],
-        },
-        {
-            "profile_id": settings.context_profile_id,
-            "definition_version": settings.definition_version,
-            "suite_version": settings.suite_version,
-            "kind": "context_16k",
-            "streaming": True,
-            "temperature": 0,
-            "configured_max_output_tokens": 128,
-            "fixture_bytes": 16 * 1024,
-            "fixtures": [
-                {"fixture_id": fixture_id, "sha256": hashes[fixture_id]}
+            ]
+            + [
+                {
+                    "fixture_id": fixture_id,
+                    "input_shape": "extended",
+                    "configured_max_output_tokens": 128,
+                    "fixture_bytes": 16 * 1024,
+                    "sha256": hashes[fixture_id],
+                }
                 for fixture_id, _ in LONG_SEEDS
             ],
         },
@@ -322,15 +322,10 @@ class ProbeRunner:
         )
         budget = self.settings.standard_budget
         if (
-            kind == ProbeKind.EXPERIENCE_SHORT
-            and int(usage["short_requests"]) >= budget.short_requests
+            int(usage["short_requests"]) + int(usage["context_requests"])
+            >= budget.response_requests
         ):
-            return False, "daily_short_budget"
-        if (
-            kind == ProbeKind.EXPERIENCE_CONTEXT
-            and int(usage["context_requests"]) >= budget.context_requests
-        ):
-            return False, "daily_context_budget"
+            return False, "daily_response_budget"
         if int(usage["output_tokens"]) + max_tokens > budget.output_tokens:
             return False, "daily_output_token_budget"
         return True, None
@@ -386,10 +381,10 @@ class ProbeRunner:
         max_tokens = self.settings.canary_max_output_tokens
         selected_prompt = prompt or CANARY_PROMPT
         if kind == ProbeKind.EXPERIENCE_SHORT:
-            profile_id = self.experience.short_profile_id
+            profile_id = self.experience.response_profile_id
             max_tokens = self.settings.short_max_output_tokens
         elif kind == ProbeKind.EXPERIENCE_CONTEXT:
-            profile_id = self.experience.context_profile_id
+            profile_id = self.experience.response_profile_id
             max_tokens = self.settings.context_max_output_tokens
         if not force and await self._maintenance(deployment.deployment_id):
             return await self._persist_skipped(
@@ -579,7 +574,6 @@ class ProbeRunner:
                 error_class, error_code = ErrorClass.SERVICE, "protocol_invalid"
             else:
                 error_class, error_code = classify_error(exc)
-        finished_clock = monotonic()
         gaps = [current - previous for previous, current in pairwise(event_times)]
         output_speed: float | None = None
         if (
@@ -611,7 +605,6 @@ class ProbeRunner:
                 first_visible - request_clock if first_visible is not None else None
             ),
             "output_speed_tps": output_speed,
-            "total_time_seconds": finished_clock - request_clock,
             "stream_gap_p50_seconds": statistics.median(gaps) if gaps else None,
             "stream_gap_p95_seconds": (
                 sorted(gaps)[max(0, int(len(gaps) * 0.95) - 1)] if gaps else None
@@ -684,7 +677,6 @@ class ProbeRunner:
             "stream_start_seconds": "s",
             "first_response_seconds": "s",
             "output_speed_tps": "tokens/s",
-            "total_time_seconds": "s",
             "stream_gap_p50_seconds": "s",
             "stream_gap_p95_seconds": "s",
             "stream_gap_max_seconds": "s",
@@ -734,14 +726,13 @@ class ProbeScheduler:
             "SELECT value_json FROM scheduler_state WHERE key='response_blocks'"
         )
         if rows:
-            return cast(dict[str, Any], json.loads(rows[0]["value_json"]))
+            value = cast(dict[str, Any], json.loads(rows[0]["value_json"]))
+            if value.get("suite_version") == self.runner.experience.suite_version:
+                return value
         return {
             "block_index": 0,
-            "short_fixture_index": 0,
-            "context_fixture_index": 0,
-            "next_short_at": None,
-            "next_context_at": None,
-            "next_rapid_at": None,
+            "next_block_at": None,
+            "suite_version": self.runner.experience.suite_version,
         }
 
     async def _save_schedule(self, value: dict[str, Any]) -> None:
@@ -769,11 +760,7 @@ class ProbeScheduler:
         epoch = await self.database.current_epoch()
         nonce = block_nonce(epoch, block_index)
         fixture_id, prompt = fixture_prompt(kind, fixture_index, nonce)
-        profile_id = (
-            self.runner.experience.short_profile_id
-            if kind == ProbeKind.EXPERIENCE_SHORT
-            else self.runner.experience.context_profile_id
-        )
+        profile_id = self.runner.experience.response_profile_id
         block_id = f"{epoch}:{self.runner.collection_mode}:{profile_id}:{block_index}"
         started = datetime.now(UTC)
         lag = max(0.0, (started - scheduled_at).total_seconds())
@@ -796,7 +783,11 @@ class ProbeScheduler:
                 lag,
             ),
         )
-        span = self.runner.settings.rapid_block_interval_seconds
+        span = (
+            self.runner.settings.rapid_block_interval_seconds
+            if self.runner.collection_mode == "rapid"
+            else self.runner.settings.standard_block_interval_seconds
+        )
         slot = span / len(deployments)
         status = "complete"
         for index, deployment in enumerate(deployments):
@@ -836,103 +827,36 @@ class ProbeScheduler:
         while not stop.is_set():
             now = datetime.now(UTC)
             block_index = int(state["block_index"])
-            if self.runner.collection_mode == "rapid":
-                next_at = (
-                    datetime.fromisoformat(state["next_rapid_at"])
-                    if state["next_rapid_at"]
-                    else now
+            next_at = (
+                datetime.fromisoformat(state["next_block_at"])
+                if state["next_block_at"]
+                else now
+            )
+            delay = (next_at - now).total_seconds()
+            if delay > 0:
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=delay)
+                continue
+            kind = (
+                ProbeKind.EXPERIENCE_SHORT
+                if block_index % 2 == 0
+                else ProbeKind.EXPERIENCE_CONTEXT
+            )
+            fixture_index = (block_index // 2) % 3
+            actual_start = datetime.now(UTC)
+            await self.run_block(kind, fixture_index, block_index, next_at, stop)
+            state["block_index"] = block_index + 1
+            interval = (
+                self.runner.settings.rapid_block_interval_seconds
+                if self.runner.collection_mode == "rapid"
+                else self.runner.settings.standard_block_interval_seconds
+            )
+            state["next_block_at"] = isoformat(
+                max(
+                    next_at + timedelta(seconds=interval),
+                    actual_start + timedelta(seconds=interval),
                 )
-                delay = (next_at - now).total_seconds()
-                if delay > 0:
-                    with suppress(TimeoutError):
-                        await asyncio.wait_for(stop.wait(), timeout=delay)
-                    continue
-                short = block_index % 2 == 0
-                key = "short_fixture_index" if short else "context_fixture_index"
-                kind = (
-                    ProbeKind.EXPERIENCE_SHORT
-                    if short
-                    else ProbeKind.EXPERIENCE_CONTEXT
-                )
-                actual_start = datetime.now(UTC)
-                await self.run_block(kind, int(state[key]), block_index, next_at, stop)
-                state[key] = (int(state[key]) + 1) % 3
-                state["block_index"] = block_index + 1
-                state["next_rapid_at"] = isoformat(
-                    max(
-                        next_at
-                        + timedelta(
-                            seconds=self.runner.settings.rapid_block_interval_seconds
-                        ),
-                        actual_start
-                        + timedelta(
-                            seconds=self.runner.settings.rapid_block_interval_seconds
-                        ),
-                    )
-                )
-            else:
-                short_at = (
-                    datetime.fromisoformat(state["next_short_at"])
-                    if state["next_short_at"]
-                    else now
-                )
-                context_at = (
-                    datetime.fromisoformat(state["next_context_at"])
-                    if state["next_context_at"]
-                    else now + timedelta(seconds=1)
-                )
-                due_at, kind, key = (
-                    (short_at, ProbeKind.EXPERIENCE_SHORT, "short_fixture_index")
-                    if short_at <= context_at
-                    else (
-                        context_at,
-                        ProbeKind.EXPERIENCE_CONTEXT,
-                        "context_fixture_index",
-                    )
-                )
-                delay = (due_at - now).total_seconds()
-                if delay > 0:
-                    with suppress(TimeoutError):
-                        await asyncio.wait_for(stop.wait(), timeout=delay)
-                    continue
-                actual_start = datetime.now(UTC)
-                await self.run_block(kind, int(state[key]), block_index, due_at, stop)
-                state[key] = (int(state[key]) + 1) % 3
-                state["block_index"] = block_index + 1
-                if kind == ProbeKind.EXPERIENCE_SHORT:
-                    state["next_short_at"] = isoformat(
-                        max(
-                            due_at
-                            + timedelta(
-                                seconds=(
-                                    self.runner.settings.standard_short_interval_seconds
-                                )
-                            ),
-                            actual_start
-                            + timedelta(
-                                seconds=(
-                                    self.runner.settings.standard_short_interval_seconds
-                                )
-                            ),
-                        )
-                    )
-                else:
-                    state["next_context_at"] = isoformat(
-                        max(
-                            due_at
-                            + timedelta(
-                                seconds=(
-                                    self.runner.settings.standard_context_interval_seconds
-                                )
-                            ),
-                            actual_start
-                            + timedelta(
-                                seconds=(
-                                    self.runner.settings.standard_context_interval_seconds
-                                )
-                            ),
-                        )
-                    )
+            )
             await self._save_schedule(state)
 
     async def confirmation_loop(self, stop: asyncio.Event) -> None:

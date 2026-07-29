@@ -178,7 +178,7 @@ def test_generation_skip_paths_and_standard_budget_reservation(
                 INSERT INTO budget_usage(
                     deployment_id, budget_date, short_requests,
                     context_requests, output_tokens
-                ) VALUES (?, ?, 0, 1, 0)
+                ) VALUES (?, ?, 2, 1, 0)
                 """,
                 (deployment.deployment_id, today),
             )
@@ -187,11 +187,12 @@ def test_generation_skip_paths_and_standard_budget_reservation(
             )
             assert (context_allowed, context_reason) == (
                 False,
-                "daily_context_budget",
+                "daily_response_budget",
             )
             await database.write(
                 """
-                UPDATE budget_usage SET context_requests=0, output_tokens=20
+                UPDATE budget_usage SET short_requests=0, context_requests=0,
+                    output_tokens=20
                 WHERE deployment_id=? AND budget_date=?
                 """,
                 (deployment.deployment_id, today),
@@ -257,11 +258,10 @@ def test_scheduler_state_rapid_and_standard_loops(tmp_path: Path) -> None:
         try:
             initial = await scheduler._load_schedule()
             assert initial["block_index"] == 0
-            if mode == "rapid":
-                initial["next_rapid_at"] = (
-                    datetime.now(UTC) - timedelta(minutes=5)
-                ).isoformat()
-                await scheduler._save_schedule(initial)
+            initial["next_block_at"] = (
+                datetime.now(UTC) - timedelta(minutes=5)
+            ).isoformat()
+            await scheduler._save_schedule(initial)
             await scheduler.response_loop(stop)
             assert calls
             stored = json.loads(
@@ -273,15 +273,10 @@ def test_scheduler_state_rapid_and_standard_loops(tmp_path: Path) -> None:
                 )
             )
             assert stored["block_index"] == 1
-            if mode == "rapid":
-                assert calls[0][0] == ProbeKind.EXPERIENCE_SHORT
-                assert stored["next_rapid_at"] is not None
-                assert datetime.now(UTC) - scheduled_calls[0] > timedelta(minutes=4)
-                assert datetime.fromisoformat(stored["next_rapid_at"]) > (
-                    datetime.now(UTC)
-                )
-            else:
-                assert stored["next_short_at"] is not None
+            assert calls[0][0] == ProbeKind.EXPERIENCE_SHORT
+            assert stored["next_block_at"] is not None
+            assert datetime.now(UTC) - scheduled_calls[0] > timedelta(minutes=4)
+            assert datetime.fromisoformat(stored["next_block_at"]) > datetime.now(UTC)
             assert (await scheduler._load_schedule())["block_index"] == 1
         finally:
             await close_database(database, writer)

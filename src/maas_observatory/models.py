@@ -56,7 +56,7 @@ class ProbeResult(FrozenModel):
     error_class: ErrorClass = ErrorClass.NONE
     error_code: str | None = None
     profile_id: str | None = None
-    definition_version: str = "2"
+    definition_version: str = "3"
     suite_version: str | None = None
     vantage_id: str | None = None
     collection_mode: str | None = None
@@ -68,7 +68,7 @@ class ProbeResult(FrozenModel):
 
 
 class ApiEnvelope(FrozenModel):
-    schema_version: Literal["3"] = "3"
+    schema_version: Literal["4"] = "4"
     generated_at: datetime = Field(default_factory=utc_now)
     data_window: str
     freshness_seconds: float | None

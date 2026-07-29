@@ -204,7 +204,7 @@ CREATE INDEX IF NOT EXISTS idx_probe_profile_fixture
 ALTER TABLE collection_epochs ADD COLUMN collection_mode TEXT
     NOT NULL DEFAULT 'standard';
 ALTER TABLE collection_epochs ADD COLUMN suite_version TEXT
-    NOT NULL DEFAULT 'response-suite-v2';
+    NOT NULL DEFAULT 'response-suite-v3';
 """
 
 
@@ -258,7 +258,7 @@ class Database:
         self,
         *,
         collection_mode: str = "standard",
-        suite_version: str = "response-suite-v2",
+        suite_version: str = "response-suite-v3",
     ) -> None:
         self.prepare_directories()
         version = await self._schema_version()

@@ -1,9 +1,7 @@
 import {
   CaretDown,
   Check,
-  Clock,
   Gauge,
-  Pulse,
   Timer
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
@@ -101,38 +99,28 @@ function ModelChooser({
 export function ModelDetail({
   models,
   selected,
-  context,
   selectedId,
   onSelectedIdChange,
   dataWindow,
   onDataWindowChange,
-  shortSeries,
-  contextSeries,
+  responseSeries,
   loading
 }: {
   models: ExperienceItem[];
   selected: ExperienceItem;
-  context: ExperienceItem | undefined;
   selectedId: string;
   onSelectedIdChange: (deploymentId: string) => void;
   dataWindow: WindowOption;
   onDataWindowChange: (window: WindowOption) => void;
-  shortSeries: MetricSeries;
-  contextSeries: MetricSeries;
+  responseSeries: MetricSeries;
   loading: boolean;
 }) {
   const first =
-    selected.first_response_p50 ??
-    selected.latest?.first_response_seconds ??
-    latest(shortSeries.first_response_seconds);
+    selected.first_response_mean ??
+    latest(responseSeries.first_response_seconds);
   const speed =
-    selected.output_speed_p50 ??
-    selected.latest?.output_speed_tps ??
-    latest(shortSeries.output_speed_tps);
-  const total =
-    selected.total_time_p50 ??
-    selected.latest?.total_time_seconds ??
-    latest(shortSeries.total_time_seconds);
+    selected.output_speed_mean ??
+    latest(responseSeries.output_speed_tps);
 
   return (
     <Reveal>
@@ -161,32 +149,26 @@ export function ModelDetail({
             <section className="detail-block performance-block">
               <div className="detail-block-head">
                 <div>
-                  <span>QUICK CHECK</span>
-                  <h3>Recent response</h3>
+                  <span>BALANCED SAMPLE</span>
+                  <h3>Average response</h3>
                 </div>
                 <p>
-                  {selected.fixture_count}/3 fixtures · n={selected.sample_count}
+                  {selected.fixture_count}/6 fixtures · n={selected.sample_count}
                 </p>
               </div>
-              <div className="metric-grid metric-grid-three">
+              <div className="metric-grid metric-grid-two">
                 <MetricTile
                   label="First response"
                   value={formatLatency(first)}
-                  note="Request start to visible answer text"
+                  note="Average time to visible answer text"
                   icon={<Timer size={18} />}
                 />
                 <MetricTile
                   label="Output speed"
                   value={formatMetric(speed)}
                   unit="tok/s"
-                  note="Provider-reported tokens across the stream"
+                  note="Average provider-reported output rate"
                   icon={<Gauge size={18} />}
-                />
-                <MetricTile
-                  label="Total time"
-                  value={formatLatency(total)}
-                  note="Request start to completed response"
-                  icon={<Clock size={18} />}
                 />
               </div>
               <div className="experience-chart-grid">
@@ -194,7 +176,7 @@ export function ModelDetail({
                   title="First response"
                   kicker="SECONDS"
                   metric="first_response_seconds"
-                  series={shortSeries}
+                  series={responseSeries}
                   window={dataWindow}
                   color="#9be7d8"
                   unit=""
@@ -204,68 +186,10 @@ export function ModelDetail({
                   title="Output speed"
                   kicker="TOKENS / SECOND"
                   metric="output_speed_tps"
-                  series={shortSeries}
+                  series={responseSeries}
                   window={dataWindow}
                   color="#e7b978"
                   unit="tok/s"
-                />
-                <MetricLineChart
-                  title="Total time"
-                  kicker="SECONDS"
-                  metric="total_time_seconds"
-                  series={shortSeries}
-                  window={dataWindow}
-                  color="#9384c8"
-                  unit=""
-                  valueFormatter={latencyFormatter}
-                />
-              </div>
-            </section>
-
-            <section className="detail-block context-block">
-              <div className="detail-block-head">
-                <div>
-                  <span>16 KIB INPUT</span>
-                  <h3>Long-context check</h3>
-                </div>
-                <p>
-                  {context?.fixture_count ?? 0}/3 fixtures · n=
-                  {context?.sample_count ?? 0}
-                </p>
-              </div>
-              <div className="metric-grid metric-grid-three">
-                <MetricTile
-                  label="Prompt tokens"
-                  value={formatMetric(
-                    context?.latest?.reported_prompt_tokens ??
-                      latest(contextSeries.reported_prompt_tokens),
-                    0
-                  )}
-                  note="Input size reported by the provider"
-                  icon={<Pulse size={18} />}
-                />
-                <MetricTile
-                  label="First response"
-                  value={formatLatency(
-                    context?.latest?.first_response_seconds ??
-                      latest(contextSeries.first_response_seconds)
-                  )}
-                  note="Includes long-input processing"
-                  icon={<Timer size={18} />}
-                />
-                <MetricTile
-                  label="Output speed"
-                  value={formatMetric(
-                    context?.latest?.output_speed_tps ??
-                      latest(contextSeries.output_speed_tps)
-                  )}
-                  unit="tok/s"
-                  note={
-                    context?.latest
-                      ? "Latest valid check"
-                      : "Waiting for a valid sample"
-                  }
-                  icon={<Gauge size={18} />}
                 />
               </div>
             </section>

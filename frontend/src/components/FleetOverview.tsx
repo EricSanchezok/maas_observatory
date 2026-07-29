@@ -1,4 +1,4 @@
-import { Gauge, Hourglass, Timer } from "@phosphor-icons/react";
+import { Gauge, Timer, WarningCircle } from "@phosphor-icons/react";
 import { formatAge, formatMetric } from "../lib/format";
 import type { ExperienceItem } from "../types";
 import { Reveal, SectionHeading, StatePill } from "./common";
@@ -8,11 +8,24 @@ function latency(value: number | null | undefined) {
   return value < 1 ? `${Math.round(value * 1000)} ms` : `${value.toFixed(2)} s`;
 }
 
-function value(summary: number | null, latest: number | null | undefined) {
-  return summary ?? latest ?? null;
-}
-
 function pendingLabel(model: ExperienceItem) {
+  const labels: Record<string, string> = {
+    connect: "Connection failed",
+    route_failed: "Connection failed",
+    timeout: "Request timed out",
+    empty_visible_output: "No visible response",
+    stream_stall: "Stream stalled"
+  };
+  if (model.latest_attempt_outcome === "failed") {
+    return labels[model.latest_attempt_error_code ?? ""] ?? "Request failed";
+  }
+  if (model.response_state === "unavailable") {
+    return (
+      model.state_reasons
+        .map((reason) => labels[reason])
+        .find((label) => label !== undefined) ?? "Connection unavailable"
+    );
+  }
   if (model.latest) {
     return formatAge(
       (Date.now() - Date.parse(model.latest.measured_at)) / 1000
@@ -21,6 +34,13 @@ function pendingLabel(model: ExperienceItem) {
   if (model.latest_attempt_reason === "request_failed") return "Request failed";
   if (model.latest_attempt_reason === "maintenance") return "Maintenance";
   return "First check scheduled";
+}
+
+function latestAttemptAge(model: ExperienceItem) {
+  if (!model.latest_attempt_at) return "First check scheduled";
+  return formatAge(
+    (Date.now() - Date.parse(model.latest_attempt_at)) / 1000
+  );
 }
 
 export function FleetOverview({ models }: { models: ExperienceItem[] }) {
@@ -33,20 +53,22 @@ export function FleetOverview({ models }: { models: ExperienceItem[] }) {
         />
         <div className="experience-fleet-grid">
           {models.map((model) => {
-            const first = value(
-              model.first_response_p50,
-              model.latest?.first_response_seconds
-            );
-            const speed = value(
-              model.output_speed_p50,
-              model.latest?.output_speed_tps
-            );
-            const total = value(
-              model.total_time_p50,
-              model.latest?.total_time_seconds
-            );
+            const latestIsValid =
+              model.response_state === "current" &&
+              model.latest_attempt_outcome === "success" &&
+              model.latest !== null;
+            const liveFailure = model.response_state === "unavailable";
+            const first = latestIsValid
+              ? model.latest?.first_response_seconds ?? null
+              : null;
+            const speed = latestIsValid
+              ? model.latest?.output_speed_tps ?? null
+              : null;
             return (
-              <article className="experience-card" key={model.deployment_id}>
+              <article
+                className={`experience-card ${liveFailure ? "is-failed" : ""}`}
+                key={model.deployment_id}
+              >
                 <div className="experience-card-head">
                   <div>
                     <strong>{model.alias}</strong>
@@ -54,7 +76,7 @@ export function FleetOverview({ models }: { models: ExperienceItem[] }) {
                   </div>
                   <StatePill state={model.response_state} compact />
                 </div>
-                <div className="experience-triad">
+                <div className="experience-triad experience-pair">
                   <div>
                     <Timer size={15} />
                     <span>First response</span>
@@ -68,17 +90,18 @@ export function FleetOverview({ models }: { models: ExperienceItem[] }) {
                       {speed !== null && <small> tok/s</small>}
                     </strong>
                   </div>
-                  <div>
-                    <Hourglass size={15} />
-                    <span>Total time</span>
-                    <strong>{latency(total)}</strong>
-                  </div>
                 </div>
+                {liveFailure && (
+                  <div className="live-failure" role="status">
+                    <WarningCircle size={15} />
+                    <span>{pendingLabel(model)}</span>
+                  </div>
+                )}
                 <div className="experience-card-foot">
                   <span>
-                    {model.fixture_count}/3 checks · n={model.sample_count}
+                    {model.fixture_count}/6 checks · n={model.sample_count}
                   </span>
-                  <span>{pendingLabel(model)}</span>
+                  <span>{latestAttemptAge(model)}</span>
                 </div>
               </article>
             );
@@ -87,10 +110,10 @@ export function FleetOverview({ models }: { models: ExperienceItem[] }) {
         <details className="method-details">
           <summary>How this is measured</summary>
           <p>
-            Each result comes from a scheduled streaming request sent by MaaS
-            Observatory. First response ends at the first visible answer text;
-            output speed uses provider-reported completion tokens; total time ends
-            when the stream completes.
+            Live cards show the latest scheduled streaming request. A failed
+            request clears its values immediately. First response ends at the first
+            visible answer text; output speed uses provider-reported completion
+            tokens.
           </p>
         </details>
       </section>

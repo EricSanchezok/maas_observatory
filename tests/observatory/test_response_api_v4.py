@@ -71,8 +71,8 @@ def test_response_state_transitions_and_measurement_errors(tmp_path: Path) -> No
                 error_code="streaming_usage_missing",
             )
             state, reasons, _, _ = await engine.evaluate(deployment_id)
-            assert state == ResponseState.DELAYED
-            assert reasons == ["latest_request_failed"]
+            assert state == ResponseState.UNAVAILABLE
+            assert reasons == ["streaming_usage_missing"]
 
             for _ in range(2):
                 await insert_probe(
@@ -142,15 +142,23 @@ def _seed_api_database(tmp_path: Path) -> tuple[object, object, object, object]:
             """,
             (deployment_id, isoformat()),
         )
-        for index, fixture in enumerate(("short-01", "short-02", "short-03")):
+        fixtures = (
+            ("experience_short", "response-01"),
+            ("experience_context", "response-04"),
+            ("experience_short", "response-02"),
+            ("experience_context", "response-05"),
+            ("experience_short", "response-03"),
+            ("experience_context", "response-06"),
+        )
+        for index, (kind, fixture) in enumerate(fixtures):
             await insert_probe(
                 database,
                 deployment_id,
+                kind=kind,
                 fixture_id=fixture,
                 measurement={
                     "first_response_seconds": 0.4 + index / 10,
                     "output_speed_tps": 12.0 + index,
-                    "total_time_seconds": 1.7 + index / 10,
                     "reported_prompt_tokens": 32,
                     "reported_completion_tokens": 8,
                 },
@@ -161,7 +169,7 @@ def _seed_api_database(tmp_path: Path) -> tuple[object, object, object, object]:
     return asyncio.run(scenario())
 
 
-def test_api_schema_v3_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> None:
+def test_api_schema_v4_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> None:
     settings, catalog, database, _ = _seed_api_database(tmp_path)
     health = RuntimeHealth()
     health.ready = True
@@ -173,18 +181,17 @@ def test_api_schema_v3_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> N
         assert client.get("/readyz").status_code == 200
         response = client.get("/api/v1/experience/overview")
         assert response.status_code == 200
-        assert response.json()["schema_version"] == "3"
+        assert response.json()["schema_version"] == "4"
         item = next(
             row
             for row in response.json()["data"]
             if row["deployment_id"] == deployment_id
         )
-        assert item["sample_count"] == 3
-        assert item["fixture_count"] == 3
+        assert item["sample_count"] == 6
+        assert item["fixture_count"] == 6
         assert item["complete_fixture_set"] is True
-        assert item["first_response_p50"] == 0.5
-        assert item["output_speed_p50"] == 13.0
-        assert item["first_response_p90"] is None
+        assert item["first_response_mean"] == 0.65
+        assert item["output_speed_mean"] == 14.5
         assert item["latest"] is not None
         etag = response.headers["etag"]
         assert (
@@ -198,8 +205,8 @@ def test_api_schema_v3_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> N
         measured = next(
             row for row in comparison if row["deployment_id"] == deployment_id
         )
-        assert measured["value"] == 13.0
-        assert measured["suite_version"] == "response-suite-v2"
+        assert measured["value"] == 14.5
+        assert measured["suite_version"] == "response-suite-v3"
         assert (
             client.get(
                 f"/api/v1/deployments/{deployment_id}/experience/series"
@@ -238,9 +245,9 @@ def test_api_latest_sample_before_summary_and_meta_is_secret_safe(
         ).json()["data"]
         assert data["sample_count"] == 1
         assert data["latest"]["first_response_seconds"] == 0.5
-        assert data["first_response_p50"] is None
+        assert data["first_response_mean"] == 0.5
         meta_text = client.get("/api/v1/meta").text.lower()
-        assert "response-suite-v2" in meta_text
+        assert "response-suite-v3" in meta_text
         assert "aggregate_output" not in meta_text
         assert "/metrics" not in meta_text
         assert "test-secret" not in meta_text

@@ -27,19 +27,13 @@ export async function fetchOverview(
   catalog: Envelope<CatalogItem[]>;
   compare: Envelope<CompareItem[]>;
   experience: Envelope<ExperienceItem[]>;
-  contextExperience: Envelope<ExperienceItem[]>;
   events: Envelope<ObservatoryEvent[]>;
 }> {
-  const [catalog, compare, experience, contextExperience, events] =
-    await Promise.all([
+  const [catalog, compare, experience, events] = await Promise.all([
       request<CatalogItem[]>("/api/v1/catalog", signal),
       request<CompareItem[]>(`/api/v1/compare?window=${window}`, signal),
       request<ExperienceItem[]>(
-        `/api/v1/experience/overview?profile=interactive-short-v2&window=${window}`,
-        signal
-      ),
-      request<ExperienceItem[]>(
-        `/api/v1/experience/overview?profile=context-16k-v2&window=${window}`,
+        `/api/v1/experience/overview?profile=response-v3&window=${window}`,
         signal
       ),
       request<ObservatoryEvent[]>(
@@ -47,25 +41,23 @@ export async function fetchOverview(
         signal
       )
     ]);
-  return { catalog, compare, experience, contextExperience, events };
+  return { catalog, compare, experience, events };
 }
 
 export async function fetchExperienceSeries(
   deploymentId: string,
-  profile: "interactive-short-v2" | "context-16k-v2",
   window: WindowOption,
   signal?: AbortSignal
 ): Promise<MetricSeries> {
   const result = await request<ExperienceSeriesData>(
     `/api/v1/deployments/${encodeURIComponent(
       deploymentId
-    )}/experience/series?profile=${profile}&window=${window}`,
+    )}/experience/series?profile=response-v3&window=${window}`,
     signal
   );
   const metrics = [
     "first_response_seconds",
     "output_speed_tps",
-    "total_time_seconds",
     "stream_gap_p95_seconds",
     "reported_prompt_tokens",
     "scheduler_lag_seconds"

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
+import statistics
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,7 +30,7 @@ WINDOW_SECONDS = {
     "7d": 604800,
     "30d": 2592000,
 }
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 
 class RuntimeHealth:
@@ -46,18 +46,6 @@ def _freshness(timestamp: str | None) -> float | None:
         0,
         (datetime.now(UTC) - datetime.fromisoformat(timestamp)).total_seconds(),
     )
-
-
-def _percentile(values: list[float], quantile: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = (len(ordered) - 1) * quantile
-    lower = math.floor(index)
-    upper = math.ceil(index)
-    if lower == upper:
-        return ordered[lower]
-    return ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower)
 
 
 def _envelope(
@@ -153,11 +141,7 @@ def create_app(
             WHERE d.active=1 ORDER BY d.alias
             """
         )
-        context = profile == settings.experience.context_profile_id
-        kind = "experience_context" if context else "experience_short"
-        expected_fixtures = {
-            item[0] for item in (LONG_SEEDS if context else SHORT_TEMPLATES)
-        }
+        expected_fixtures = {item[0] for item in (*SHORT_TEMPLATES, *LONG_SEEDS)}
         summaries: list[dict[str, Any]] = []
         for deployment in deployments:
             runs = await database.query(
@@ -167,14 +151,15 @@ def create_app(
                        vantage_id, collection_mode, fixture_id, block_id,
                        scheduler_lag_seconds, measurement_json
                 FROM probe_runs
-                WHERE deployment_id=? AND kind=? AND profile_id=?
+                WHERE deployment_id=?
+                  AND kind IN ('experience_short', 'experience_context')
+                  AND profile_id=?
                   AND definition_version=? AND suite_version=?
                   AND collection_mode=? AND finished_at>=?
                 ORDER BY finished_at
                 """,
                 (
                     deployment["deployment_id"],
-                    kind,
                     profile,
                     settings.experience.definition_version,
                     settings.experience.suite_version,
@@ -189,10 +174,9 @@ def create_app(
                 if (
                     row["outcome"] == "success"
                     and measurement.get("first_response_seconds") is not None
-                    and measurement.get("total_time_seconds") is not None
                 ):
                     successful.append((row, measurement))
-            latest_attempt = runs[-1] if runs else None
+            latest_attempt = attempts[-1] if attempts else None
             latest = successful[-1] if successful else None
             fixtures = {row["fixture_id"] for row, _ in successful if row["fixture_id"]}
             sample_count = len(successful)
@@ -209,11 +193,6 @@ def create_app(
                 for _, measurement in successful
                 if measurement.get("output_speed_tps") is not None
             ]
-            total_time = [
-                float(measurement["total_time_seconds"])
-                for _, measurement in successful
-            ]
-            tails_ready = sample_count >= settings.experience.tail_quantile_min_samples
             latest_payload = None
             measured_at = None
             if latest:
@@ -223,7 +202,6 @@ def create_app(
                     "measured_at": measured_at,
                     "first_response_seconds": measurement["first_response_seconds"],
                     "output_speed_tps": measurement.get("output_speed_tps"),
-                    "total_time_seconds": measurement["total_time_seconds"],
                     "reported_prompt_tokens": measurement.get("reported_prompt_tokens"),
                     "reported_completion_tokens": measurement.get(
                         "reported_completion_tokens"
@@ -258,31 +236,21 @@ def create_app(
                     "fixture_count": len(fixtures),
                     "complete_fixture_set": complete_suite,
                     "path_success_rate": path_success,
-                    "first_response_p50": (
-                        _percentile(first_response, 0.5) if complete_suite else None
+                    "first_response_mean": (
+                        statistics.fmean(first_response) if first_response else None
                     ),
-                    "first_response_p90": (
-                        _percentile(first_response, 0.9) if tails_ready else None
-                    ),
-                    "output_speed_p50": (
-                        _percentile(output_speed, 0.5)
-                        if complete_suite and output_speed
-                        else None
-                    ),
-                    "output_speed_p10": (
-                        _percentile(output_speed, 0.1)
-                        if tails_ready and output_speed
-                        else None
-                    ),
-                    "total_time_p50": (
-                        _percentile(total_time, 0.5) if complete_suite else None
-                    ),
-                    "total_time_p90": (
-                        _percentile(total_time, 0.9) if tails_ready else None
+                    "output_speed_mean": (
+                        statistics.fmean(output_speed) if output_speed else None
                     ),
                     "latest": latest_payload,
                     "latest_attempt_outcome": (
                         latest_attempt["outcome"] if latest_attempt else None
+                    ),
+                    "latest_attempt_error_class": (
+                        latest_attempt["error_class"] if latest_attempt else None
+                    ),
+                    "latest_attempt_error_code": (
+                        latest_attempt["error_code"] if latest_attempt else None
                     ),
                     "latest_attempt_reason": _attempt_reason(
                         latest_attempt["outcome"] if latest_attempt else None,
@@ -376,14 +344,10 @@ def create_app(
 
     @app.api_route("/api/v1/experience/overview", methods=["GET", "HEAD"])
     async def public_experience_overview(
-        profile: Annotated[str, Query()] = "interactive-short-v2",
+        profile: Annotated[str, Query()] = "response-v3",
         window: Annotated[Window, Query()] = "24h",
     ) -> dict[str, Any]:
-        allowed = {
-            settings.experience.short_profile_id,
-            settings.experience.context_profile_id,
-        }
-        if profile not in allowed:
+        if profile != settings.experience.response_profile_id:
             raise HTTPException(status_code=400, detail="unknown response profile")
         data = await experience_summary(profile=profile, window=window)
         newest = max(
@@ -415,7 +379,7 @@ def create_app(
     )
     async def experience_latest(deployment_id: str) -> dict[str, Any]:
         rows = await experience_summary(
-            profile=settings.experience.short_profile_id, window="24h"
+            profile=settings.experience.response_profile_id, window="24h"
         )
         item = next(
             (row for row in rows if row["deployment_id"] == deployment_id), None
@@ -437,14 +401,10 @@ def create_app(
     )
     async def experience_series(
         deployment_id: str,
-        profile: Annotated[str, Query()] = "interactive-short-v2",
+        profile: Annotated[str, Query()] = "response-v3",
         window: Annotated[Window, Query()] = "24h",
     ) -> dict[str, Any]:
-        allowed = {
-            settings.experience.short_profile_id,
-            settings.experience.context_profile_id,
-        }
-        if profile not in allowed:
+        if profile != settings.experience.response_profile_id:
             raise HTTPException(status_code=400, detail="unknown response profile")
         exists = await database.scalar(
             "SELECT COUNT(*) FROM deployments WHERE deployment_id=? AND active=1",
@@ -452,25 +412,21 @@ def create_app(
         )
         if not exists:
             raise HTTPException(status_code=404, detail="unknown deployment")
-        kind = (
-            "experience_context"
-            if profile == settings.experience.context_profile_id
-            else "experience_short"
-        )
         rows = await database.query(
             """
             SELECT finished_at, outcome, error_class, error_code,
                    fixture_id, block_id, scheduler_lag_seconds,
                    collection_mode, measurement_json
             FROM probe_runs
-            WHERE deployment_id=? AND kind=? AND profile_id=?
+            WHERE deployment_id=?
+              AND kind IN ('experience_short', 'experience_context')
+              AND profile_id=?
               AND definition_version=? AND suite_version=?
               AND collection_mode=? AND finished_at>=?
             ORDER BY finished_at
             """,
             (
                 deployment_id,
-                kind,
                 profile,
                 settings.experience.definition_version,
                 settings.experience.suite_version,
@@ -508,7 +464,6 @@ def create_app(
                             "stream_start_seconds",
                             "first_response_seconds",
                             "output_speed_tps",
-                            "total_time_seconds",
                             "stream_gap_p50_seconds",
                             "stream_gap_p95_seconds",
                             "stream_gap_max_seconds",
@@ -559,14 +514,14 @@ def create_app(
         window: Annotated[Window, Query()] = "24h",
     ) -> dict[str, Any]:
         summaries = await experience_summary(
-            profile=settings.experience.short_profile_id, window=window
+            profile=settings.experience.response_profile_id, window=window
         )
         data = [
             {
                 "deployment_id": item["deployment_id"],
                 "alias": item["alias"],
                 "value": (
-                    item["output_speed_p50"] if item["complete_fixture_set"] else None
+                    item["output_speed_mean"] if item["complete_fixture_set"] else None
                 ),
                 "unit": "tokens/s",
                 "source_kind": "streaming_request",
@@ -589,7 +544,7 @@ def create_app(
                 "reason": (
                     None
                     if item["complete_fixture_set"]
-                    and item["output_speed_p50"] is not None
+                    and item["output_speed_mean"] is not None
                     else "waiting_for_complete_fixture_set"
                 ),
             }
@@ -662,11 +617,8 @@ def create_app(
                     "rapid_block_seconds": (
                         settings.probes.rapid_block_interval_seconds
                     ),
-                    "standard_short_seconds": (
-                        settings.probes.standard_short_interval_seconds
-                    ),
-                    "standard_context_seconds": (
-                        settings.probes.standard_context_interval_seconds
+                    "standard_block_seconds": (
+                        settings.probes.standard_block_interval_seconds
                     ),
                     "global_inference_concurrency": 1,
                     "rapid_automatic_limit": None,
@@ -679,7 +631,9 @@ def create_app(
                         "(reported completion tokens - 1) / "
                         "(last output event - first output event)"
                     ),
-                    "total_time_seconds": "request start to completed stream",
+                    "summary": (
+                        "arithmetic mean across the balanced six-fixture suite"
+                    ),
                 },
             },
         )

@@ -33,12 +33,8 @@ function App() {
 
   const selected =
     models.find((model) => model.deployment_id === selectedId) ?? models[0];
-  const selectedContext = data?.contextExperience.data.find(
-    (model) => model.deployment_id === selectedId
-  );
   const {
-    shortSeries,
-    contextSeries,
+    responseSeries,
     loading: seriesLoading
   } = useExperienceSeries(
     selected?.deployment_id ?? "",
@@ -48,7 +44,9 @@ function App() {
   const currentCount = models.filter(
     (model) => model.response_state === "current"
   ).length;
-  const checkedCount = models.filter((model) => model.latest !== null).length;
+  const checkedCount = models.filter(
+    (model) => model.latest_attempt_at !== null
+  ).length;
   const collectionMode = models[0]?.collection_mode ?? "standard";
   const freshness = data?.experience.freshness_seconds ?? null;
 
@@ -131,13 +129,11 @@ function App() {
           <ModelDetail
             models={models}
             selected={selected}
-            context={selectedContext}
             selectedId={selectedId}
             onSelectedIdChange={setSelectedId}
             dataWindow={dataWindow}
             onDataWindowChange={setDataWindow}
-            shortSeries={shortSeries}
-            contextSeries={contextSeries}
+            responseSeries={responseSeries}
             loading={seriesLoading}
           />
         ) : (
@@ -159,7 +155,7 @@ function App() {
         <div className="footer-meta">
           <span><Database size={14} /> SQLite WAL</span>
           <span><Pulse size={14} /> Scheduled streaming checks</span>
-          <span>Schema v{data?.experience.schema_version ?? "3"}</span>
+          <span>API schema v{data?.experience.schema_version ?? "4"}</span>
         </div>
         <p>Response measurements from one documented server location.</p>
       </footer>

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "maas-observatory"
-version = "0.4.0"
+version = "0.5.0"
 description = "Low-impact MaaS observability and reproducible tool-use evaluation"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

@@ -42,11 +42,9 @@ def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings
                 "short_max_output_tokens": 8,
                 "context_max_output_tokens": 8,
                 "rapid_block_interval_seconds": 10,
-                "standard_short_interval_seconds": 60,
-                "standard_context_interval_seconds": 90,
+                "standard_block_interval_seconds": 60,
                 "standard_budget": {
-                    "short_requests": 2,
-                    "context_requests": 1,
+                    "response_requests": 3,
                     "output_tokens": 24,
                 },
             },
@@ -60,12 +58,10 @@ def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings
             },
             "experience": {
                 "vantage_id": "test-vantage",
-                "suite_version": "response-suite-v2",
-                "short_profile_id": "interactive-short-v2",
-                "context_profile_id": "context-16k-v2",
-                "definition_version": "2",
-                "summary_min_samples": 3,
-                "tail_quantile_min_samples": 10,
+                "suite_version": "response-suite-v3",
+                "response_profile_id": "response-v3",
+                "definition_version": "3",
+                "summary_min_samples": 6,
                 "baseline_min_samples": 20,
             },
         }
@@ -116,8 +112,8 @@ async def insert_probe(
     outcome: str = "success",
     error_class: str = "none",
     error_code: str | None = None,
-    profile_id: str = "interactive-short-v2",
-    fixture_id: str = "short-01",
+    profile_id: str = "response-v3",
+    fixture_id: str = "response-01",
     collection_mode: str = "rapid",
     finished_at: str | None = None,
     measurement: dict[str, Any] | None = None,
@@ -132,7 +128,7 @@ async def insert_probe(
             definition_version, suite_version, vantage_id,
             collection_mode, fixture_id, block_id, scheduler_lag_seconds,
             confirmation_of, measurement_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '2', 'response-suite-v2',
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '3', 'response-suite-v3',
                   'test-vantage', ?, ?, 'test-block', 0, ?, ?)
         """,
         (
@@ -153,7 +149,6 @@ async def insert_probe(
                 or {
                     "first_response_seconds": 0.5,
                     "output_speed_tps": 15.0,
-                    "total_time_seconds": 2.0,
                     "reported_prompt_tokens": 32,
                     "reported_completion_tokens": 8,
                 },

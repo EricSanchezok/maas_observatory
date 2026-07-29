@@ -42,7 +42,7 @@ function EmptyComparison({ items }: { items: CompareItem[] }) {
         <div>
           <span>CHECK PROGRESS</span>
           <strong>{complete}/{items.length}</strong>
-          <p>Three fixtures are required before models are compared.</p>
+          <p>All six fixtures are required before models are compared.</p>
         </div>
       </div>
       <SamplingStatus items={items} />
@@ -74,7 +74,7 @@ function SingleResult({
       </div>
       <div className="single-result-model">
         <strong>{result.alias}</strong>
-        <span>3/3 fixtures · n={result.sample_count}</span>
+        <span>6/6 fixtures · n={result.sample_count}</span>
         <time dateTime={result.measured_at ?? undefined}>
           {formatDateTime(result.measured_at)}
         </time>
@@ -110,7 +110,7 @@ function RankedResults({
           </span>
           <div className="ranked-model">
             <strong>{item.alias}</strong>
-            <span>3/3 fixtures</span>
+            <span>6/6 fixtures</span>
           </div>
           <div className="ranked-track">
             <span style={{ width: `${((item.value ?? 0) / maximum) * 100}%` }} />
@@ -141,7 +141,7 @@ export function SpeedComparison({ items }: { items: CompareItem[] }) {
       <section className="page-section comparison-section" id="comparison">
         <SectionHeading
           title="Compare responses"
-          meta="Output speed across the same three quick-check fixtures"
+          meta="Average output speed across the same balanced six-fixture suite"
         >
           <div className={`probe-profile mode-${collectionMode}`}>
             {collectionMode === "rapid" ? "RAPID COLLECTION" : "STANDARD"}

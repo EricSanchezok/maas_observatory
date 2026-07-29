@@ -8,7 +8,7 @@ export type ResponseState =
   | "maintenance";
 
 export interface Envelope<T> {
-  schema_version: "3";
+  schema_version: "4";
   generated_at: string;
   data_window: string;
   freshness_seconds: number | null;
@@ -33,7 +33,6 @@ export interface ResponseMeasurement {
   measured_at: string;
   first_response_seconds: number | null;
   output_speed_tps: number | null;
-  total_time_seconds: number | null;
   reported_prompt_tokens: number | null;
   reported_completion_tokens: number | null;
   fixture_id: string;
@@ -58,14 +57,12 @@ export interface ExperienceItem {
   complete_fixture_set: boolean;
   path_success_rate: number | null;
   quality: Quality;
-  first_response_p50: number | null;
-  first_response_p90: number | null;
-  output_speed_p50: number | null;
-  output_speed_p10: number | null;
-  total_time_p50: number | null;
-  total_time_p90: number | null;
+  first_response_mean: number | null;
+  output_speed_mean: number | null;
   latest: ResponseMeasurement | null;
   latest_attempt_outcome: "success" | "failed" | "skipped" | null;
+  latest_attempt_error_class: string | null;
+  latest_attempt_error_code: string | null;
   latest_attempt_reason:
     | "first_check_scheduled"
     | "maintenance"

@@ -7,7 +7,6 @@ import json
 import statistics
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from maas_common.catalog import ModelCatalog
 from maas_observatory.database import Database, isoformat
@@ -38,7 +37,8 @@ class StateEngine:
 
         routes = await self.database.query(
             """
-            SELECT id, finished_at, outcome FROM probe_runs
+            SELECT id, finished_at, outcome, error_class, error_code
+            FROM probe_runs
             WHERE deployment_id=? AND kind='route'
             ORDER BY finished_at DESC LIMIT 3
             """,
@@ -49,7 +49,8 @@ class StateEngine:
             SELECT finished_at, outcome, error_class, error_code,
                    scheduler_lag_seconds, measurement_json
             FROM probe_runs
-            WHERE deployment_id=? AND kind='experience_short'
+            WHERE deployment_id=?
+              AND kind IN ('experience_short', 'experience_context')
               AND profile_id=? AND definition_version=?
               AND suite_version=? AND collection_mode=?
               AND outcome!='skipped'
@@ -57,7 +58,7 @@ class StateEngine:
             """,
             (
                 deployment_id,
-                self.settings.experience.short_profile_id,
+                self.settings.experience.response_profile_id,
                 self.settings.experience.definition_version,
                 self.settings.experience.suite_version,
                 self.settings.collection_mode,
@@ -66,10 +67,10 @@ class StateEngine:
         last_route_at = routes[0]["finished_at"] if routes else None
         last_response_at = attempts[0]["finished_at"] if attempts else None
 
-        if await self._unavailable(deployment_id, routes):
+        if routes and routes[0]["outcome"] != "success":
             return (
                 ResponseState.UNAVAILABLE,
-                ["confirmed_request_failure"],
+                [str(routes[0]["error_code"] or "route_failed")],
                 last_route_at,
                 last_response_at,
             )
@@ -83,14 +84,12 @@ class StateEngine:
         latest = attempts[0]
         if latest["outcome"] != "success":
             return (
-                ResponseState.DELAYED,
-                ["latest_request_failed"],
+                ResponseState.UNAVAILABLE,
+                [str(latest["error_code"] or "latest_request_failed")],
                 last_route_at,
                 last_response_at,
             )
-        allowed_lag = self.settings.interval_for(
-            self.settings.experience.short_profile_id
-        )
+        allowed_lag = self.settings.interval_for()
         if (
             latest["scheduler_lag_seconds"] is not None
             and float(latest["scheduler_lag_seconds"]) > allowed_lag
@@ -108,8 +107,7 @@ class StateEngine:
             <= self.settings.probes.route_interval_seconds * 2
         )
         response_current = (
-            self._age(latest["finished_at"])
-            <= self.settings.interval_for(self.settings.experience.short_profile_id) * 2
+            self._age(latest["finished_at"]) <= self.settings.interval_for() * 2
         )
         measurement = json.loads(latest["measurement_json"])
         has_visible_response = measurement.get("first_response_seconds") is not None
@@ -136,47 +134,19 @@ class StateEngine:
             (datetime.now(UTC) - datetime.fromisoformat(timestamp)).total_seconds(),
         )
 
-    async def _unavailable(
-        self, deployment_id: str, routes: list[dict[str, Any]]
-    ) -> bool:
-        generations = await self.database.query(
-            """
-            SELECT outcome, error_class FROM probe_runs
-            WHERE deployment_id=?
-              AND kind IN ('experience_short', 'experience_context', 'confirmation')
-              AND outcome!='skipped'
-            ORDER BY finished_at DESC LIMIT 2
-            """,
-            (deployment_id,),
-        )
-        if len(generations) == 2 and all(
-            row["outcome"] == "failed" and row["error_class"] == "service_error"
-            for row in generations
-        ):
-            return True
-        if len(routes) == 3 and all(row["outcome"] == "failed" for row in routes):
-            confirmation = await self.database.query(
-                """
-                SELECT outcome FROM probe_runs
-                WHERE confirmation_of=? ORDER BY finished_at DESC LIMIT 1
-                """,
-                (routes[0]["id"],),
-            )
-            return bool(confirmation and confirmation[0]["outcome"] == "failed")
-        return False
-
     async def _regression(self, deployment_id: str) -> list[str]:
         rows = await self.database.query(
             """
             SELECT measurement_json FROM probe_runs
-            WHERE deployment_id=? AND kind='experience_short'
+            WHERE deployment_id=?
+              AND kind IN ('experience_short', 'experience_context')
               AND profile_id=? AND definition_version=? AND suite_version=?
               AND outcome='success' AND finished_at>=?
             ORDER BY finished_at DESC
             """,
             (
                 deployment_id,
-                self.settings.experience.short_profile_id,
+                self.settings.experience.response_profile_id,
                 self.settings.experience.definition_version,
                 self.settings.experience.suite_version,
                 isoformat(datetime.now(UTC) - timedelta(days=7)),
@@ -187,7 +157,6 @@ class StateEngine:
             return []
         rules = (
             ("first_response_seconds", 2.0, "high"),
-            ("total_time_seconds", 2.0, "high"),
             ("output_speed_tps", 0.7, "low"),
         )
         regressions: list[str] = []
@@ -284,7 +253,7 @@ class StateEngine:
                     "critical" if state == ResponseState.UNAVAILABLE else "warning",
                     state,
                     (
-                        "Requests unavailable"
+                        "Connection unavailable"
                         if state == ResponseState.UNAVAILABLE
                         else "Response checks delayed"
                     ),
