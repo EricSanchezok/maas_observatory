@@ -49,7 +49,6 @@ export function FleetOverview({ models }: { models: ExperienceItem[] }) {
       <section className="page-section fleet-section" id="fleet">
         <SectionHeading
           title="Live response"
-          meta="Recent streaming checks from this server"
         />
         <div className="experience-fleet-grid">
           {models.map((model) => {
@@ -98,24 +97,12 @@ export function FleetOverview({ models }: { models: ExperienceItem[] }) {
                   </div>
                 )}
                 <div className="experience-card-foot">
-                  <span>
-                    {model.fixture_count}/6 checks · n={model.sample_count}
-                  </span>
                   <span>{latestAttemptAge(model)}</span>
                 </div>
               </article>
             );
           })}
         </div>
-        <details className="method-details">
-          <summary>How this is measured</summary>
-          <p>
-            Live cards show the latest scheduled streaming request. A failed
-            request clears its values immediately. First response ends at the first
-            visible answer text; output speed uses provider-reported completion
-            tokens.
-          </p>
-        </details>
       </section>
     </Reveal>
   );

@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
 import type { ResponseState, WindowOption } from "../types";
 
 const WINDOWS: WindowOption[] = ["1h", "6h", "24h"];
@@ -18,32 +17,8 @@ export function Reveal({
   children: ReactNode;
   className?: string;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "-5% 0px" }
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
   return (
-    <div
-      ref={ref}
-      className={`reveal ${visible ? "is-visible" : ""} ${className}`}
-    >
-      {children}
-    </div>
+    <div className={`reveal ${className}`}>{children}</div>
   );
 }
 
@@ -126,7 +101,7 @@ export function MetricTile({
   label: string;
   value: string;
   unit?: string;
-  note: string;
+  note?: string;
   icon: ReactNode;
 }) {
   return (
@@ -139,11 +114,7 @@ export function MetricTile({
         {value}
         {unit && value !== "—" && <small>{unit}</small>}
       </div>
-      <p>{note}</p>
+      {note && <p>{note}</p>}
     </article>
   );
-}
-
-export function DataFootnote({ children }: { children: ReactNode }) {
-  return <div className="data-footnote">{children}</div>;
 }

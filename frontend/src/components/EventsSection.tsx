@@ -1,5 +1,4 @@
 import {
-  ArrowUpRight,
   CheckCircle,
   WarningCircle
 } from "@phosphor-icons/react";
@@ -15,16 +14,12 @@ export function EventsSection({ events }: { events: ObservatoryEvent[] }) {
       <section className="page-section events-section" id="events">
         <SectionHeading
           title="Recent activity"
-          meta={`${recentEvents.length} response changes in this window`}
-        >
-          <a className="text-link" href="/docs" target="_blank" rel="noreferrer">
-            Measurement API <ArrowUpRight size={15} />
-          </a>
-        </SectionHeading>
+          meta={`${recentEvents.length} recent changes`}
+        />
         <article className="event-list event-list-wide">
           <header>
-            <span>RESPONSE CHANGES</span>
-            <span>LOCAL TIME</span>
+            <span>Response change</span>
+            <span>Time</span>
           </header>
           {recentEvents.length > 0 ? (
             recentEvents.map((event) => (

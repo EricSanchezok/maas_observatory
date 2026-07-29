@@ -8,7 +8,7 @@ colors:
   border: "#283038"
   text: "#edf2f4"
   text-secondary: "#bbc4cb"
-  muted: "#77828c"
+  muted: "#929da6"
   signal: "#9be7d8"
   signal-muted: "#5f9e93"
   warning: "#e7b978"
@@ -16,35 +16,36 @@ colors:
 typography:
   display:
     fontFamily: "Geist, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
-    fontSize: "72px"
+    fontSize: "76px"
     fontWeight: 500
     lineHeight: 0.96
     letterSpacing: "-0.035em"
   headline:
     fontFamily: "Geist, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
-    fontSize: "48px"
+    fontSize: "44px"
     fontWeight: 500
     lineHeight: 1
     letterSpacing: "-0.03em"
   body:
     fontFamily: "Geist, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
-    fontSize: "15px"
+    fontSize: "16px"
     fontWeight: 400
     lineHeight: 1.5
   metadata:
     fontFamily: "DM Mono, ui-monospace, monospace"
-    fontSize: "11px"
+    fontSize: "12px"
     fontWeight: 400
     lineHeight: 1.4
 rounded:
   control: "8px"
   panel: "10px"
 spacing:
-  xs: "8px"
-  sm: "12px"
-  md: "20px"
+  xs: "4px"
+  sm: "8px"
+  md: "16px"
   lg: "32px"
-  section: "80px"
+  xl: "48px"
+  section: "96px"
 components:
   status-current:
     backgroundColor: "{colors.surface-raised}"
@@ -56,7 +57,7 @@ components:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text}"
     rounded: "{rounded.panel}"
-    padding: "20px"
+    padding: "24px"
 ---
 
 # Design System: MaaS Observatory
@@ -72,9 +73,9 @@ The system rejects debug-console density, decorative technology motifs, generic 
 **Key Characteristics:**
 
 - One aligned content column with deliberate vertical rhythm
-- Flat, bordered data surfaces with minimal decoration
+- Tonal data surfaces with soft separation instead of table-like outlines
 - Familiar controls and direct, user-facing labels
-- Technical metadata disclosed progressively
+- Technical metadata stays in documentation and API responses
 
 ## Colors
 
@@ -101,11 +102,11 @@ Near-black surfaces create a quiet field; pale mint identifies current, measured
 
 Geist keeps the product clear and contemporary. DM Mono is reserved for timestamps, units, fixture identifiers, and compact measurement metadata.
 
-- **Display** (500, 72px, 0.96): masthead only.
-- **Headline** (500, 48px, 1): major page sections.
+- **Display** (500, 76px, 0.98): masthead only.
+- **Headline** (500, 44px, 1.08): major page sections.
 - **Title** (550, 20–28px, 1.2): model and panel headings.
-- **Body** (400, 15px, 1.5): descriptions, capped at 70ch.
-- **Label** (400, 11px, 1.4): timestamps and units; uppercase only where space is constrained.
+- **Body** (400, 16px, 1.5): descriptions, capped at 70ch.
+- **Label** (400, 12px, 1.4): timestamps and units; uppercase only where space is constrained.
 
 **The Plain-Language Rule.** Primary labels describe what users experience; protocol abbreviations belong in measurement details.
 

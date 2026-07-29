@@ -127,7 +127,6 @@ export function ModelDetail({
       <section className="page-section detail-section" id="models">
         <SectionHeading
           title="Model response"
-          meta="The model and time window apply to every panel below"
         />
         <div className="detail-frame">
           <div className="detail-toolbar">
@@ -149,25 +148,22 @@ export function ModelDetail({
             <section className="detail-block performance-block">
               <div className="detail-block-head">
                 <div>
-                  <span>BALANCED SAMPLE</span>
                   <h3>Average response</h3>
                 </div>
                 <p>
-                  {selected.fixture_count}/6 fixtures · n={selected.sample_count}
+                  {selected.sample_count} recent checks
                 </p>
               </div>
               <div className="metric-grid metric-grid-two">
                 <MetricTile
                   label="First response"
                   value={formatLatency(first)}
-                  note="Average time to visible answer text"
                   icon={<Timer size={18} />}
                 />
                 <MetricTile
                   label="Output speed"
                   value={formatMetric(speed)}
                   unit="tok/s"
-                  note="Average provider-reported output rate"
                   icon={<Gauge size={18} />}
                 />
               </div>
@@ -197,7 +193,6 @@ export function ModelDetail({
             <section className="detail-block reliability-block">
               <div className="detail-block-head">
                 <div>
-                  <span>RECENT REQUESTS</span>
                   <h3>Reliability</h3>
                 </div>
               </div>
@@ -207,10 +202,8 @@ export function ModelDetail({
                     ? "—"
                     : `${Math.round(selected.path_success_rate * 100)}%`}
                 </strong>
-                <span>completed request path</span>
-                <span>
-                  Measurement limitations do not count as request failures.
-                </span>
+                <span>successful checks</span>
+                <span>{selected.sample_count} samples</span>
               </div>
             </section>
           </div>

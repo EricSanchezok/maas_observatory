@@ -52,7 +52,9 @@ function Coverage({
         <span style={{ width: `${percent}%` }} />
       </div>
       <p>
-        {percent}% coverage · {valid}/{total} checks
+        {valid === 0
+          ? "No valid checks yet"
+          : `${valid} of ${total} checks available`}
       </p>
     </div>
   );
@@ -163,7 +165,7 @@ export function MetricLineChart({
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <EmptyChart label="Waiting for two valid checks" />
+          <EmptyChart label="Waiting for valid checks" />
         )}
       </div>
       <Coverage {...stats} />

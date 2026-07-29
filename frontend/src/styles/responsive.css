@@ -10,7 +10,7 @@
   .masthead,
   .page-section,
   footer {
-    width: min(100% - 40px, 900px);
+    width: min(100% - 48px, 900px);
   }
 
   .masthead::after {
@@ -90,15 +90,15 @@
   }
 
   .masthead {
-    min-height: 400px;
-    padding: 64px 0 40px;
+    min-height: 360px;
+    padding: var(--space-7) 0;
   }
 
   .masthead h1 {
     max-width: 340px;
-    margin: 20px 0 42px;
-    font-size: clamp(48px, 15vw, 60px);
-    line-height: 0.9;
+    margin: 0 0 var(--space-6);
+    font-size: 56px;
+    line-height: 0.94;
   }
 
   .masthead h1 span {
@@ -113,15 +113,7 @@
   }
 
   .status-rail {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .status-rail div:nth-child(2)::after {
-    display: none;
-  }
-
-  .status-rail div:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--line);
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .connection-banner {
@@ -134,14 +126,14 @@
   }
 
   .page-section {
-    padding: 40px 0;
+    padding: var(--space-8) 0;
   }
 
   .section-heading {
     align-items: flex-start;
     flex-direction: column;
-    gap: 18px;
-    margin-bottom: 26px;
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
   }
 
   .section-heading h2 {
@@ -179,11 +171,11 @@
 
   .model-menu button > span:nth-child(2) strong {
     max-width: 115px;
-    font-size: 10px;
+    font-size: 13px;
   }
 
   .detail-block {
-    padding: 28px 12px 32px;
+    padding: var(--space-6) var(--space-4);
   }
 
   .detail-block-head {
@@ -200,16 +192,6 @@
     grid-template-columns: 1fr;
   }
 
-  .metric-tile,
-  .metric-tile:nth-child(2) {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .metric-tile:last-child {
-    border-bottom: 0;
-  }
-
   .chart-panel-head {
     min-height: 66px;
     padding: 13px 14px;
@@ -222,11 +204,6 @@
 
   .chart-coverage {
     padding-inline: 14px;
-  }
-
-  .data-footnote {
-    flex-direction: column;
-    gap: 5px;
   }
 
   .comparison-progress {
@@ -285,14 +262,9 @@
 
   footer {
     display: flex;
-    min-height: 240px;
+    min-height: 184px;
     flex-direction: column;
     align-items: flex-start;
     justify-content: center;
-  }
-
-  .footer-meta {
-    flex-direction: column;
-    gap: 8px;
   }
 }

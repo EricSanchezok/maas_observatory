@@ -1,8 +1,8 @@
-import { Clock, Gauge, Pulse, ShieldCheck } from "@phosphor-icons/react";
+import { Clock, Gauge, Pulse } from "@phosphor-icons/react";
 import { comparisonMode, comparisonStatusCounts } from "../lib/comparison";
 import { formatDateTime, formatMetric } from "../lib/format";
 import type { CompareItem } from "../types";
-import { DataFootnote, Reveal, SectionHeading } from "./common";
+import { Reveal, SectionHeading } from "./common";
 
 const REASON_LABELS: Record<string, string> = {
   first_check_scheduled: "First check scheduled",
@@ -40,15 +40,12 @@ function EmptyComparison({ items }: { items: CompareItem[] }) {
           <Pulse size={22} />
         </div>
         <div>
-          <span>CHECK PROGRESS</span>
+          <span>Models ready</span>
           <strong>{complete}/{items.length}</strong>
-          <p>All six fixtures are required before models are compared.</p>
         </div>
       </div>
       <SamplingStatus items={items} />
       <div className="comparison-progress-meta">
-        <ShieldCheck size={17} />
-        <span>One streaming request at a time</span>
         <time dateTime={latestAttempt?.latest_attempt_at ?? undefined}>
           Last check {formatDateTime(latestAttempt?.latest_attempt_at)}
         </time>
@@ -68,7 +65,7 @@ function SingleResult({
     <div className="single-result">
       <div className="single-result-value">
         <Gauge size={21} />
-        <span>FIRST COMPLETE SET</span>
+        <span>First result</span>
         <strong>{formatMetric(result.value)}</strong>
         <small>{result.unit}</small>
       </div>
@@ -134,19 +131,10 @@ function RankedResults({
 export function SpeedComparison({ items }: { items: CompareItem[] }) {
   const valid = items.filter((item) => item.value !== null);
   const mode = comparisonMode(items);
-  const collectionMode = items[0]?.collection_mode ?? "standard";
-
   return (
     <Reveal>
       <section className="page-section comparison-section" id="comparison">
-        <SectionHeading
-          title="Compare responses"
-          meta="Average output speed across the same balanced six-fixture suite"
-        >
-          <div className={`probe-profile mode-${collectionMode}`}>
-            {collectionMode === "rapid" ? "RAPID COLLECTION" : "STANDARD"}
-          </div>
-        </SectionHeading>
+        <SectionHeading title="Compare responses" />
         {mode === "empty" && <EmptyComparison items={items} />}
         {mode === "single" && (
           <SingleResult result={valid[0]} allItems={items} />
@@ -157,13 +145,6 @@ export function SpeedComparison({ items }: { items: CompareItem[] }) {
             pendingCount={items.length - valid.length}
           />
         )}
-        <DataFootnote>
-          <span>Same fixture suite, version and server location</span>
-          <span>Results describe response behavior, not model quality</span>
-          {collectionMode === "rapid" && (
-            <span>Rapid collection continues until manually changed</span>
-          )}
-        </DataFootnote>
       </section>
     </Reveal>
   );

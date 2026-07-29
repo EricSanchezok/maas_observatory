@@ -13,13 +13,22 @@
   --line-soft: #1d242a;
   --text: #edf2f4;
   --text-2: #bbc4cb;
-  --muted: #77828c;
+  --muted: #929da6;
   --mint: #9be7d8;
   --mint-dim: #5f9e93;
   --amber: #e7b978;
   --violet: #9384c8;
   --red: #f07872;
-  --radius: 8px;
+  --radius: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
 }
 
 * {
@@ -36,6 +45,8 @@ body {
   margin: 0;
   overflow-x: clip;
   background: var(--bg);
+  font-size: 16px;
+  line-height: 1.5;
 }
 
 button,
@@ -70,16 +81,8 @@ summary:focus-visible {
 }
 
 .reveal {
-  opacity: 0;
-  transform: translateY(18px);
-  transition:
-    opacity 520ms cubic-bezier(0.22, 0.72, 0.2, 1),
-    transform 520ms cubic-bezier(0.22, 0.72, 0.2, 1);
-}
-
-.reveal.is-visible {
   opacity: 1;
-  transform: translateY(0);
+  transform: none;
 }
 
 @keyframes live-pulse {

@@ -1,7 +1,5 @@
 import {
   ArrowClockwise,
-  Database,
-  Pulse,
   WarningCircle
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
@@ -47,7 +45,6 @@ function App() {
   const checkedCount = models.filter(
     (model) => model.latest_attempt_at !== null
   ).length;
-  const collectionMode = models[0]?.collection_mode ?? "standard";
   const freshness = data?.experience.freshness_seconds ?? null;
 
   return (
@@ -83,7 +80,6 @@ function App() {
       <main>
         <section className="masthead" id="overview">
           <div className="masthead-title">
-            <span className="masthead-label">ACADEMY MODEL RESPONSE</span>
             <h1>
               MaaS <span>Observatory</span>
             </h1>
@@ -94,26 +90,14 @@ function App() {
               <strong>{models.length || "—"}</strong>
             </div>
             <div>
-              <span>Checked recently</span>
+              <span>Checked</span>
               <strong>{models.length ? `${checkedCount}/${models.length}` : "—"}</strong>
             </div>
             <div>
               <span>Available</span>
               <strong>{models.length ? `${currentCount}/${models.length}` : "—"}</strong>
             </div>
-            <div>
-              <span>Collection mode</span>
-              <strong className={collectionMode === "rapid" ? "attention" : ""}>
-                {collectionMode === "rapid" ? "Rapid" : "Standard"}
-              </strong>
-            </div>
           </div>
-          {collectionMode === "rapid" && (
-            <div className="rapid-note" role="status">
-              Rapid collection is active. Switch back to Standard manually after
-              this session.
-            </div>
-          )}
           {error && (
             <div className="connection-banner" role="status">
               <WarningCircle size={18} />
@@ -152,12 +136,7 @@ function App() {
           <BrandMark />
           <strong>MaaS Observatory</strong>
         </div>
-        <div className="footer-meta">
-          <span><Database size={14} /> SQLite WAL</span>
-          <span><Pulse size={14} /> Scheduled streaming checks</span>
-          <span>API schema v{data?.experience.schema_version ?? "4"}</span>
-        </div>
-        <p>Response measurements from one documented server location.</p>
+        <p>Response status and speed from scheduled checks.</p>
       </footer>
     </div>
   );

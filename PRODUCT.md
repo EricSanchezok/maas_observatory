@@ -26,10 +26,12 @@ Avoid debug panels, dense infrastructure consoles, neon science-fiction styling,
   output speed.
 - A failed latest request must never be masked by an older successful value.
 - Combine compact and extended inputs through one fixed, balanced sample suite.
-- State measurement limits through concise disclosure, not defensive copy.
+- Keep methodology in documentation and API metadata instead of repeating it
+  throughout the primary interface.
 - Never display a value whose source or statistical boundary cannot be defended.
 - Use familiar product interactions and consistent language.
-- Reveal methodology progressively while keeping every result traceable.
+- Keep every result traceable without exposing collection internals in the
+  user-facing summary.
 
 ## Accessibility & Inclusion
 
