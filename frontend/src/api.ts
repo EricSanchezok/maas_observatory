@@ -33,7 +33,7 @@ export async function fetchOverview(
       request<CatalogItem[]>("/api/v1/catalog", signal),
       request<CompareItem[]>(`/api/v1/compare?window=${window}`, signal),
       request<ExperienceItem[]>(
-        `/api/v1/experience/overview?profile=response-v3&window=${window}`,
+        `/api/v1/experience/overview?window=${window}`,
         signal
       ),
       request<ObservatoryEvent[]>(
@@ -52,7 +52,7 @@ export async function fetchExperienceSeries(
   const result = await request<ExperienceSeriesData>(
     `/api/v1/deployments/${encodeURIComponent(
       deploymentId
-    )}/experience/series?profile=response-v3&window=${window}`,
+    )}/experience/series?window=${window}`,
     signal
   );
   const metrics = [

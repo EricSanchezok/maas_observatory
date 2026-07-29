@@ -206,7 +206,7 @@ def test_api_schema_v4_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> N
             row for row in comparison if row["deployment_id"] == deployment_id
         )
         assert measured["value"] == 14.5
-        assert measured["suite_version"] == "response-suite-v3"
+        assert measured["suite_version"] == "response-suite-v4"
         assert (
             client.get(
                 f"/api/v1/deployments/{deployment_id}/experience/series"
@@ -247,7 +247,7 @@ def test_api_latest_sample_before_summary_and_meta_is_secret_safe(
         assert data["latest"]["first_response_seconds"] == 0.5
         assert data["first_response_mean"] == 0.5
         meta_text = client.get("/api/v1/meta").text.lower()
-        assert "response-suite-v3" in meta_text
+        assert "response-suite-v4" in meta_text
         assert "aggregate_output" not in meta_text
         assert "/metrics" not in meta_text
         assert "test-secret" not in meta_text

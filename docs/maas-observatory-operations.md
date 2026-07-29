@@ -69,13 +69,34 @@ If streaming usage is absent, Output speed is unavailable. A successfully
 completed response still counts as a successful path check. Characters and SSE
 chunks are never used as token estimates.
 
-`response-suite-v3` contains three compact fixtures and three deterministic
+`response-suite-v4` contains three compact fixtures and three deterministic
 16 KiB fixtures in one balanced response profile. The repository stores their
 definitions and SHA-256 digests, but the
 database, logs, API, and exports do not retain prompt or response content. A
 sampling block uses the same fixture and nonce for all nine deployments. The
 deployment order rotates and reverses deterministically to avoid a fixed
 first/last position.
+
+Both compact and extended fixtures allow up to 1,024 completion tokens. This
+ceiling prevents reasoning-capable deployments from consuming the entire
+response budget before producing visible text and gives steady-state speed
+measurements enough output events to reduce short-stream variance. Responses
+may stop naturally before the ceiling. Changing this limit requires a new
+suite and definition version so results collected under different request
+shapes are never combined.
+
+Observer HTTP clients explicitly ignore workstation proxy environment and
+system settings. Requests follow the host routing table directly, which keeps
+the declared observer vantage stable and prevents a desktop VPN or proxy from
+silently changing the measured network path.
+
+Waiting for a response to begin and detecting a stalled stream use separate
+timeouts. A request may take up to 180 seconds from request start to produce its
+first non-empty output event. Once output has started, a 30-second gap without
+another stream line is classified as a stream stall. Response headers, blank
+lines, and heartbeat frames do not reset the first-output deadline. This
+prevents a slow queue or long prefill from being misreported as a broken stream
+while retaining a finite failure boundary.
 
 The Live response area shows only the latest completed request. A failure clears
 the displayed values immediately. Model summaries use the arithmetic mean of

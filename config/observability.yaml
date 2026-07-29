@@ -17,15 +17,16 @@ storage:
 probes:
   route_interval_seconds: 60
   confirmation_delay_seconds: 60
+  response_start_timeout_seconds: 180
   stream_stall_seconds: 30
   canary_max_output_tokens: 8
-  short_max_output_tokens: 64
-  context_max_output_tokens: 128
+  short_max_output_tokens: 1024
+  context_max_output_tokens: 1024
   rapid_block_interval_seconds: 60
   standard_block_interval_seconds: 360
   standard_budget:
     response_requests: 240
-    output_tokens: 21504
+    output_tokens: 245760
 
 profiles:
   deepseek-v4-pro: thinking
@@ -40,8 +41,8 @@ profiles:
 
 experience:
   vantage_id: observatory-primary
-  suite_version: response-suite-v3
-  response_profile_id: response-v3
-  definition_version: "3"
+  suite_version: response-suite-v4
+  response_profile_id: response-v4
+  definition_version: "4"
   summary_min_samples: 6
   baseline_min_samples: 20

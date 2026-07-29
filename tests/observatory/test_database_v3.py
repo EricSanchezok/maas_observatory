@@ -77,6 +77,28 @@ def test_schema_v3_contains_only_active_response_tables(tmp_path: Path) -> None:
                 "metrics_sources",
             }.isdisjoint(names)
             assert len(await database.query("SELECT * FROM deployments")) == 9
+            await database.write(
+                """
+                INSERT INTO collection_blocks(
+                    block_id, profile_id, fixture_id, collection_mode,
+                    scheduled_at, started_at, order_json,
+                    scheduler_lag_seconds, status
+                ) VALUES (
+                    'stale', 'response-v4', 'response-01', 'rapid',
+                    ?, ?, '[]', 0, 'running'
+                )
+                """,
+                (isoformat(), isoformat()),
+            )
+            await database.recover_incomplete_blocks()
+            recovered = (
+                await database.query(
+                    "SELECT status, finished_at FROM collection_blocks "
+                    "WHERE block_id='stale'"
+                )
+            )[0]
+            assert recovered["status"] == "interrupted"
+            assert recovered["finished_at"] is not None
             ok, detail = await database.quick_check()
             assert (ok, detail) == (True, "ok")
             assert await database.current_epoch() == 1

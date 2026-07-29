@@ -115,7 +115,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="MaaS Observatory API",
-        version="3.0.0",
+        version="4.0.0",
         docs_url="/docs",
         redoc_url=None,
     )
@@ -344,9 +344,10 @@ def create_app(
 
     @app.api_route("/api/v1/experience/overview", methods=["GET", "HEAD"])
     async def public_experience_overview(
-        profile: Annotated[str, Query()] = "response-v3",
+        profile: Annotated[str | None, Query()] = None,
         window: Annotated[Window, Query()] = "24h",
     ) -> dict[str, Any]:
+        profile = profile or settings.experience.response_profile_id
         if profile != settings.experience.response_profile_id:
             raise HTTPException(status_code=400, detail="unknown response profile")
         data = await experience_summary(profile=profile, window=window)
@@ -401,9 +402,10 @@ def create_app(
     )
     async def experience_series(
         deployment_id: str,
-        profile: Annotated[str, Query()] = "response-v3",
+        profile: Annotated[str | None, Query()] = None,
         window: Annotated[Window, Query()] = "24h",
     ) -> dict[str, Any]:
+        profile = profile or settings.experience.response_profile_id
         if profile != settings.experience.response_profile_id:
             raise HTTPException(status_code=400, detail="unknown response profile")
         exists = await database.scalar(
@@ -609,11 +611,17 @@ def create_app(
                 "api_schema_version": SCHEMA_VERSION,
                 "service": "MaaS Observatory",
                 "collection_mode": settings.collection_mode,
+                "response_profile_id": settings.experience.response_profile_id,
                 "suite_version": settings.experience.suite_version,
+                "definition_version": settings.experience.definition_version,
                 "observer_vantage": settings.experience.vantage_id,
                 "windows": list(WINDOW_SECONDS),
                 "schedule": {
                     "route_seconds": settings.probes.route_interval_seconds,
+                    "response_start_timeout_seconds": (
+                        settings.probes.response_start_timeout_seconds
+                    ),
+                    "stream_stall_seconds": settings.probes.stream_stall_seconds,
                     "rapid_block_seconds": (
                         settings.probes.rapid_block_interval_seconds
                     ),
@@ -622,6 +630,15 @@ def create_app(
                     ),
                     "global_inference_concurrency": 1,
                     "rapid_automatic_limit": None,
+                },
+                "request_shape": {
+                    "compact_max_completion_tokens": (
+                        settings.probes.short_max_output_tokens
+                    ),
+                    "extended_max_completion_tokens": (
+                        settings.probes.context_max_output_tokens
+                    ),
+                    "proxy_environment": "ignored",
                 },
                 "metric_definitions": {
                     "first_response_seconds": (

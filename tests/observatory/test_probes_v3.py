@@ -12,6 +12,8 @@ from maas_observatory.models import ErrorClass, ProbeKind, ProbeOutcome
 from maas_observatory.probes import (
     ProbeRunner,
     ProbeScheduler,
+    _observer_http_client,
+    _output_from_delta,
     balanced_order,
     block_nonce,
     classify_error,
@@ -56,6 +58,17 @@ def _sse_response(
     )
 
 
+class _DelayedStream(httpx.AsyncByteStream):
+    def __init__(self, first: bytes, *, delay: float = 1.1) -> None:
+        self.first = first
+        self.delay = delay
+
+    async def __aiter__(self) -> Any:
+        yield self.first
+        await asyncio.sleep(self.delay)
+        yield b"data: [DONE]\n\n"
+
+
 def test_suite_fixtures_nonce_and_balanced_order() -> None:
     catalog = configured_catalog()
     short_id, short = fixture_prompt(ProbeKind.EXPERIENCE_SHORT, 0, "abc")
@@ -78,9 +91,13 @@ def test_suite_fixtures_nonce_and_balanced_order() -> None:
     assert {order[0] for order in orders[:9]} == {
         item.deployment_id for item in catalog.deployments
     }
-    definitions = profile_definitions(make_settings(Path("/tmp")).experience)
+    settings = make_settings(Path("/tmp"))
+    definitions = profile_definitions(settings.experience, settings.probes)
     assert {item["kind"] for item in definitions} == {"balanced_response"}
     assert len(definitions[0]["fixtures"]) == 6
+    assert {
+        item["configured_max_output_tokens"] for item in definitions[0]["fixtures"]
+    } == {8}
 
 
 def test_error_classification() -> None:
@@ -94,6 +111,26 @@ def test_error_classification() -> None:
         httpx.HTTPStatusError("bad", request=request, response=response)
     ) == (ErrorClass.SERVICE, "http_503")
     assert classify_error(RuntimeError("bad"))[0] == ErrorClass.MEASUREMENT
+
+
+def test_observer_client_ignores_environment_and_delta_variants() -> None:
+    async def scenario() -> None:
+        client = _observer_http_client(httpx.Timeout(5))
+        try:
+            assert client._trust_env is False
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
+    assert _output_from_delta(
+        {
+            "content": [{"type": "text", "text": "visible"}],
+            "reasoning": "hidden",
+        }
+    ) == ("visible", "hidden")
+    assert _output_from_delta(
+        {"content": "answer", "reasoning_details": [{"text": "thought"}]}
+    ) == ("answer", "thought")
 
 
 def test_streaming_measurements_use_visible_content_and_reported_usage(
@@ -239,6 +276,67 @@ def test_empty_output_and_http_failure_are_service_failures(tmp_path: Path) -> N
             assert (failed.error_class, failed.error_code) == (
                 ErrorClass.SERVICE,
                 "http_503",
+            )
+        finally:
+            await client.aclose()
+            await close_database(database, writer)
+
+    asyncio.run(scenario())
+
+
+def test_first_output_timeout_is_distinct_from_stream_stall(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        base_settings = make_settings(tmp_path)
+        settings = base_settings.model_copy(
+            update={
+                "probes": base_settings.probes.model_copy(
+                    update={
+                        "response_start_timeout_seconds": 1,
+                        "stream_stall_seconds": 1,
+                    }
+                )
+            }
+        )
+        catalog = configured_catalog()
+        database, writer = await open_database(settings, catalog)
+        streams = [
+            _DelayedStream(b": heartbeat\n\n"),
+            _DelayedStream(
+                b'data: {"choices":[{"delta":{"reasoning":"thinking"}}]}\n\n'
+            ),
+        ]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, stream=streams.pop(0), request=request)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        runner = ProbeRunner(
+            catalog,
+            settings.probes,
+            settings.profiles,
+            database,
+            settings.experience,
+            settings.collection_mode,
+            client=client,
+        )
+        try:
+            no_output = await runner.generation(
+                catalog.deployments[0],
+                ProbeKind.EXPERIENCE_SHORT,
+                prompt="test",
+            )
+            stalled = await runner.generation(
+                catalog.deployments[1],
+                ProbeKind.EXPERIENCE_SHORT,
+                prompt="test",
+            )
+            assert (no_output.error_class, no_output.error_code) == (
+                ErrorClass.SERVICE,
+                "response_start_timeout",
+            )
+            assert (stalled.error_class, stalled.error_code) == (
+                ErrorClass.SERVICE,
+                "stream_stall",
             )
         finally:
             await client.aclose()

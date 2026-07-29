@@ -125,8 +125,9 @@ async def serve(
         writer = asyncio.create_task(database.writer_loop(), name="sqlite-writer")
         try:
             await database.wait_writer()
+            await database.recover_incomplete_blocks()
             await database.synchronize_catalog(catalog)
-            for definition in profile_definitions(settings.experience):
+            for definition in profile_definitions(settings.experience, settings.probes):
                 fixture_digest = hashlib.sha256(
                     json.dumps(definition["fixtures"], sort_keys=True).encode()
                 ).hexdigest()

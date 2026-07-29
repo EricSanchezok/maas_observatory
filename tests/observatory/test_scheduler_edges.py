@@ -74,6 +74,7 @@ def test_runner_lookup_context_and_profile_validation(tmp_path: Path) -> None:
                 bad_profile.profile_for(catalog.deployments[0])
             async with runner:
                 assert runner._client is not None
+                assert runner._client._trust_env is False
             assert runner._client is not None
             assert runner._client.is_closed
         finally:

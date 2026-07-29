@@ -56,7 +56,7 @@ class ProbeResult(FrozenModel):
     error_class: ErrorClass = ErrorClass.NONE
     error_code: str | None = None
     profile_id: str | None = None
-    definition_version: str = "3"
+    definition_version: str = "4"
     suite_version: str | None = None
     vantage_id: str | None = None
     collection_mode: str | None = None

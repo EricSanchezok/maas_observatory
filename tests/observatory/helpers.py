@@ -37,6 +37,7 @@ def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings
             "probes": {
                 "route_interval_seconds": 10,
                 "confirmation_delay_seconds": 10,
+                "response_start_timeout_seconds": 10,
                 "stream_stall_seconds": 2,
                 "canary_max_output_tokens": 8,
                 "short_max_output_tokens": 8,
@@ -58,9 +59,9 @@ def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings
             },
             "experience": {
                 "vantage_id": "test-vantage",
-                "suite_version": "response-suite-v3",
-                "response_profile_id": "response-v3",
-                "definition_version": "3",
+                "suite_version": "response-suite-v4",
+                "response_profile_id": "response-v4",
+                "definition_version": "4",
                 "summary_min_samples": 6,
                 "baseline_min_samples": 20,
             },
@@ -79,7 +80,7 @@ async def open_database(
     writer = asyncio.create_task(database.writer_loop())
     await database.wait_writer()
     await database.synchronize_catalog(catalog)
-    for definition in profile_definitions(settings.experience):
+    for definition in profile_definitions(settings.experience, settings.probes):
         serialized = json.dumps(definition, sort_keys=True)
         await database.write(
             """
@@ -112,7 +113,7 @@ async def insert_probe(
     outcome: str = "success",
     error_class: str = "none",
     error_code: str | None = None,
-    profile_id: str = "response-v3",
+    profile_id: str = "response-v4",
     fixture_id: str = "response-01",
     collection_mode: str = "rapid",
     finished_at: str | None = None,
@@ -128,7 +129,7 @@ async def insert_probe(
             definition_version, suite_version, vantage_id,
             collection_mode, fixture_id, block_id, scheduler_lag_seconds,
             confirmation_of, measurement_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '3', 'response-suite-v3',
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '4', 'response-suite-v4',
                   'test-vantage', ?, ?, 'test-block', 0, ?, ?)
         """,
         (

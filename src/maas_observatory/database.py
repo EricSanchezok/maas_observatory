@@ -204,7 +204,7 @@ CREATE INDEX IF NOT EXISTS idx_probe_profile_fixture
 ALTER TABLE collection_epochs ADD COLUMN collection_mode TEXT
     NOT NULL DEFAULT 'standard';
 ALTER TABLE collection_epochs ADD COLUMN suite_version TEXT
-    NOT NULL DEFAULT 'response-suite-v3';
+    NOT NULL DEFAULT 'response-suite-v4';
 """
 
 
@@ -258,7 +258,7 @@ class Database:
         self,
         *,
         collection_mode: str = "standard",
-        suite_version: str = "response-suite-v3",
+        suite_version: str = "response-suite-v4",
     ) -> None:
         self.prepare_directories()
         version = await self._schema_version()
@@ -377,6 +377,18 @@ class Database:
     async def scalar(self, sql: str, params: Sequence[Any] = ()) -> Any:
         rows = await self.query(sql, params)
         return next(iter(rows[0].values())) if rows else None
+
+    async def recover_incomplete_blocks(self) -> None:
+        """Close blocks left running by a previous process termination."""
+
+        await self.write(
+            """
+            UPDATE collection_blocks
+            SET status='interrupted', finished_at=?
+            WHERE status='running'
+            """,
+            (isoformat(),),
+        )
 
     async def synchronize_catalog(self, catalog: ModelCatalog) -> None:
         public_document = {

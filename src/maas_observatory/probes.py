@@ -66,6 +66,16 @@ class ProbeConfigurationError(ValueError):
     """Local configuration is missing; this is not a service failure."""
 
 
+def _observer_http_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
+    """Create a direct client that cannot inherit workstation proxy settings."""
+
+    return httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=False,
+        trust_env=False,
+    )
+
+
 def classify_error(exc: Exception) -> tuple[ErrorClass, str]:
     if isinstance(exc, httpx.TimeoutException):
         return ErrorClass.TRANSPORT, "timeout"
@@ -120,7 +130,9 @@ def fixture_hashes() -> dict[str, str]:
     return hashes
 
 
-def profile_definitions(settings: ExperienceSettings) -> list[dict[str, Any]]:
+def profile_definitions(
+    settings: ExperienceSettings, probes: ProbeSettings
+) -> list[dict[str, Any]]:
     hashes = fixture_hashes()
     return [
         {
@@ -134,7 +146,7 @@ def profile_definitions(settings: ExperienceSettings) -> list[dict[str, Any]]:
                 {
                     "fixture_id": fixture_id,
                     "input_shape": "compact",
-                    "configured_max_output_tokens": 64,
+                    "configured_max_output_tokens": (probes.short_max_output_tokens),
                     "sha256": hashes[fixture_id],
                 }
                 for fixture_id, _ in SHORT_TEMPLATES
@@ -143,7 +155,7 @@ def profile_definitions(settings: ExperienceSettings) -> list[dict[str, Any]]:
                 {
                     "fixture_id": fixture_id,
                     "input_shape": "extended",
-                    "configured_max_output_tokens": 128,
+                    "configured_max_output_tokens": (probes.context_max_output_tokens),
                     "fixture_bytes": 16 * 1024,
                     "sha256": hashes[fixture_id],
                 }
@@ -190,13 +202,30 @@ def _request_payload(
     return payload
 
 
+def _text_from_delta_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            text = item.get("text", item.get("content"))
+            if isinstance(text, str):
+                parts.append(text)
+    return "".join(parts)
+
+
 def _output_from_delta(delta: dict[str, Any]) -> tuple[str, str]:
-    content = delta.get("content")
-    reasoning = delta.get("reasoning_content")
-    return (
-        content if isinstance(content, str) else "",
-        reasoning if isinstance(reasoning, str) else "",
+    content = _text_from_delta_value(delta.get("content"))
+    reasoning = (
+        _text_from_delta_value(delta.get("reasoning_content"))
+        or _text_from_delta_value(delta.get("reasoning"))
+        or _text_from_delta_value(delta.get("reasoning_details"))
     )
+    return content, reasoning
 
 
 class ProbeRunner:
@@ -223,9 +252,7 @@ class ProbeRunner:
 
     async def __aenter__(self) -> ProbeRunner:
         if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(30), follow_redirects=False
-            )
+            self._client = _observer_http_client(httpx.Timeout(30))
         return self
 
     async def __aexit__(self, *_: object) -> None:
@@ -504,7 +531,12 @@ class ProbeRunner:
                 operational_profile=operational_profile,
                 max_tokens=max_tokens,
             )
-            timeout = httpx.Timeout(60, read=self.settings.stream_stall_seconds)
+            timeout = httpx.Timeout(
+                connect=30,
+                read=self.settings.response_start_timeout_seconds,
+                write=30,
+                pool=30,
+            )
 
             async def consume(client: httpx.AsyncClient) -> None:
                 nonlocal headers_clock, first_event, first_visible, last_event
@@ -518,7 +550,22 @@ class ProbeRunner:
                 ) as response:
                     headers_clock = monotonic()
                     response.raise_for_status()
-                    async for line in response.aiter_lines():
+                    lines = response.aiter_lines()
+                    while True:
+                        line_timeout = float(self.settings.stream_stall_seconds)
+                        if not output_seen:
+                            first_output_deadline = (
+                                request_clock
+                                + self.settings.response_start_timeout_seconds
+                            )
+                            line_timeout = max(0.0, first_output_deadline - monotonic())
+                            if line_timeout == 0:
+                                raise TimeoutError
+                        try:
+                            async with asyncio.timeout(line_timeout):
+                                line = await anext(lines)
+                        except StopAsyncIteration:
+                            break
                         if not line.startswith("data:"):
                             continue
                         data = line[5:].strip()
@@ -556,9 +603,7 @@ class ProbeRunner:
             if self._client is not None and not self._owns_client:
                 await consume(self._client)
             else:
-                async with httpx.AsyncClient(
-                    timeout=timeout, follow_redirects=False
-                ) as client:
+                async with _observer_http_client(timeout) as client:
                     await consume(client)
             if not visible_seen:
                 raise RuntimeError("empty_visible_output")
@@ -566,8 +611,11 @@ class ProbeRunner:
             outcome = ProbeOutcome.FAILED
             if isinstance(exc, RuntimeError) and str(exc) == "empty_visible_output":
                 error_class, error_code = ErrorClass.SERVICE, "empty_visible_output"
-            elif isinstance(exc, httpx.ReadTimeout) and output_seen:
-                error_class, error_code = ErrorClass.SERVICE, "stream_stall"
+            elif isinstance(exc, TimeoutError):
+                error_class = ErrorClass.SERVICE
+                error_code = "stream_stall" if output_seen else "response_start_timeout"
+            elif isinstance(exc, httpx.ReadTimeout) and headers_clock is not None:
+                error_class, error_code = ErrorClass.SERVICE, "response_start_timeout"
             elif isinstance(exc, ProbeConfigurationError):
                 error_class, error_code = ErrorClass.MEASUREMENT, "configuration"
             elif isinstance(exc, (json.JSONDecodeError, ValueError)):
@@ -729,11 +777,13 @@ class ProbeScheduler:
             value = cast(dict[str, Any], json.loads(rows[0]["value_json"]))
             if value.get("suite_version") == self.runner.experience.suite_version:
                 return value
-        return {
+        value = {
             "block_index": 0,
             "next_block_at": None,
             "suite_version": self.runner.experience.suite_version,
         }
+        await self._save_schedule(value)
+        return value
 
     async def _save_schedule(self, value: dict[str, Any]) -> None:
         await self.database.write(
