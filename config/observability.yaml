@@ -29,7 +29,7 @@ probes:
     output_tokens: 3932160
 
 profiles:
-  deepseek-v4-pro: thinking
+  deepseek-v4-pro: no-thinking
   deepseek-v4-flash: thinking
   glm-5.2: no-thinking
   qwen3.6-27b: no-thinking

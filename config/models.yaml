@@ -33,6 +33,10 @@ deployments:
         request_overrides:
           chat_template_kwargs:
             thinking: true
+      no-thinking:
+        request_overrides:
+          chat_template_kwargs:
+            thinking: false
 
   - deployment_id: maas-deepseek-v4-flash-w8a8
     alias: deepseek-v4-flash
