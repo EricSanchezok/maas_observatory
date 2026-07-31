@@ -35,7 +35,7 @@ class StorageSettings(StrictModel):
 
 class StandardBudget(StrictModel):
     response_requests: int = Field(default=240, ge=0)
-    output_tokens: int = Field(default=245760, ge=0)
+    output_tokens: int = Field(default=3932160, ge=0)
 
 
 class ProbeSettings(StrictModel):
@@ -44,8 +44,8 @@ class ProbeSettings(StrictModel):
     response_start_timeout_seconds: int = Field(default=180, ge=10)
     stream_stall_seconds: int = Field(default=30, ge=1)
     canary_max_output_tokens: int = Field(default=8, ge=1)
-    short_max_output_tokens: int = Field(default=1024, ge=2)
-    context_max_output_tokens: int = Field(default=1024, ge=2)
+    short_max_output_tokens: int = Field(default=16384, ge=2)
+    context_max_output_tokens: int = Field(default=16384, ge=2)
     rapid_block_interval_seconds: int = Field(default=60, ge=10)
     standard_block_interval_seconds: int = Field(default=600, ge=60)
     standard_budget: StandardBudget = Field(default_factory=StandardBudget)

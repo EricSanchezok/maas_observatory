@@ -20,13 +20,13 @@ probes:
   response_start_timeout_seconds: 180
   stream_stall_seconds: 30
   canary_max_output_tokens: 8
-  short_max_output_tokens: 1024
-  context_max_output_tokens: 1024
+  short_max_output_tokens: 16384
+  context_max_output_tokens: 16384
   rapid_block_interval_seconds: 60
   standard_block_interval_seconds: 600
   standard_budget:
     response_requests: 240
-    output_tokens: 245760
+    output_tokens: 3932160
 
 profiles:
   deepseek-v4-pro: thinking
