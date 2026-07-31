@@ -48,10 +48,12 @@ function latestAttemptAge(model: ExperienceItem) {
 
 function latestSampleNote(model: ExperienceItem): string {
   if (!model.latest) return "No single-sample measurement yet";
+  const firstToken =
+    model.latest.stream_start_seconds ?? model.latest.first_response_seconds;
   return [
     "Latest sample",
     formatAge((Date.now() - Date.parse(model.latest.measured_at)) / 1000),
-    `first response ${formatLatency(model.latest.first_response_seconds)}`,
+    `first token ${formatLatency(firstToken)}`,
     `output speed ${formatMetric(model.latest.output_speed_tps)} tok/s`
   ].join(" · ");
 }
@@ -99,8 +101,8 @@ export function FleetOverview({
                 <div className="experience-triad experience-pair">
                   <div>
                     <Timer size={15} />
-                    <span>First response</span>
-                    <strong>{formatLatency(model.first_response_p50)}</strong>
+                    <span>First token</span>
+                    <strong>{formatLatency(model.first_token_p50)}</strong>
                   </div>
                   <div>
                     <Gauge size={15} />

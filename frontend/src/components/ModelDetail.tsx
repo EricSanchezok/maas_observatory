@@ -117,7 +117,8 @@ export function ModelDetail({
   loading: boolean;
 }) {
   const isReasoning = selected.reasoning_tokens_p50 !== null;
-  const firstToken = selected.first_token_p50;
+  const firstToken =
+    selected.first_token_p50 ?? latest(responseSeries.stream_start_seconds);
   const first =
     selected.first_response_p50 ??
     latest(responseSeries.first_response_seconds);
@@ -186,8 +187,8 @@ export function ModelDetail({
                 ) : (
                   <>
                     <MetricTile
-                      label="First response"
-                      value={formatLatency(first)}
+                      label="First token"
+                      value={formatLatency(firstToken)}
                       icon={<Timer size={18} />}
                     />
                     <MetricTile
@@ -201,9 +202,9 @@ export function ModelDetail({
               </div>
               <div className="experience-chart-grid">
                 <MetricLineChart
-                  title="First response"
+                  title="First token"
                   kicker="SECONDS"
-                  metric="first_response_seconds"
+                  metric="stream_start_seconds"
                   series={responseSeries}
                   window={dataWindow}
                   color="#9be7d8"

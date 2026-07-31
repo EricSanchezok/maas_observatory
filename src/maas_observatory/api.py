@@ -266,6 +266,7 @@ def create_app(
                 latest_payload = {
                     "measured_at": measured_at,
                     "first_response_seconds": measurement["first_response_seconds"],
+                    "stream_start_seconds": measurement.get("stream_start_seconds"),
                     "output_speed_tps": measurement.get("output_speed_tps"),
                     "reported_prompt_tokens": measurement.get("reported_prompt_tokens"),
                     "reported_completion_tokens": measurement.get(

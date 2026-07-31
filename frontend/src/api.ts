@@ -70,6 +70,7 @@ export async function fetchExperienceSeries(
     signal
   );
   const metrics = [
+    "stream_start_seconds",
     "first_response_seconds",
     "output_speed_tps",
     "stream_gap_p95_seconds",

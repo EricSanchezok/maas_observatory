@@ -32,6 +32,7 @@ export interface CatalogItem {
 export interface ResponseMeasurement {
   measured_at: string;
   first_response_seconds: number | null;
+  stream_start_seconds: number | null;
   output_speed_tps: number | null;
   reported_prompt_tokens: number | null;
   reported_completion_tokens: number | null;
