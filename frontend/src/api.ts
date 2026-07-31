@@ -9,8 +9,21 @@ import type {
   WindowOption
 } from "./types";
 
+/**
+ * Resolve API paths against the directory of the current page so the app
+ * works both at the site root and behind a reverse proxy with a path prefix
+ * (e.g. VSCode NAT forwarding under /proxy/8080/).
+ */
+function apiBase(): string {
+  const { pathname, origin } = window.location;
+  const directory = pathname.endsWith("/")
+    ? pathname.slice(0, -1)
+    : pathname;
+  return origin + directory;
+}
+
 async function request<T>(path: string, signal?: AbortSignal): Promise<Envelope<T>> {
-  const response = await fetch(path, {
+  const response = await fetch(apiBase() + path, {
     signal,
     headers: { Accept: "application/json" }
   });
