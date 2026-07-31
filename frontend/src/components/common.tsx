@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { ResponseState, WindowOption } from "../types";
 
-const WINDOWS: WindowOption[] = ["1h", "6h", "24h"];
+const WINDOWS: WindowOption[] = ["1h", "6h", "24h", "7d", "30d"];
 const STATE_LABELS: Record<ResponseState, string> = {
   current: "Current",
   collecting: "Checking",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchExperienceSeries, fetchOverview } from "../api";
+import { fetchAvailability, fetchExperienceSeries, fetchOverview } from "../api";
 import type {
+  AvailabilityItem,
   CatalogItem,
   CompareItem,
   Envelope,
@@ -15,6 +16,7 @@ export interface DashboardData {
   compare: Envelope<CompareItem[]>;
   experience: Envelope<ExperienceItem[]>;
   events: Envelope<ObservatoryEvent[]>;
+  availability: Envelope<AvailabilityItem[]>;
 }
 
 const EMPTY_SERIES: MetricSeries = {};
@@ -61,6 +63,10 @@ export function useExperienceSeries(
   return { responseSeries, loading };
 }
 
+function availabilityDays(dataWindow: WindowOption): 7 | 30 {
+  return dataWindow === "7d" ? 7 : 30;
+}
+
 export function useObservatoryData(dataWindow: WindowOption) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,9 +79,12 @@ export function useObservatoryData(dataWindow: WindowOption) {
     let alive = true;
     const load = async () => {
       try {
-        const result = await fetchOverview(dataWindow, controller.signal);
+        const [overview, availability] = await Promise.all([
+          fetchOverview(dataWindow, controller.signal),
+          fetchAvailability(availabilityDays(dataWindow), controller.signal)
+        ]);
         if (!alive) return;
-        setData(result);
+        setData({ ...overview, availability });
         setError(null);
       } catch (loadError) {
         if (!alive || controller.signal.aborted) return;

@@ -180,6 +180,8 @@ def test_streaming_measurements_use_visible_content_and_reported_usage(
             )
             assert float(result.measurements["output_speed_tps"]) > 0
             assert result.measurements["reported_completion_tokens"] == 8
+            assert result.measurements["reasoning_chars"] == 8
+            assert result.measurements["reasoning_tokens_estimated"] == 2
             payload = json.loads(
                 (
                     await database.query(
@@ -189,6 +191,8 @@ def test_streaming_measurements_use_visible_content_and_reported_usage(
                 )[0]["measurement_json"]
             )
             assert "hello" not in json.dumps(payload)
+            assert payload["reasoning_chars"] == 8
+            assert payload["reasoning_tokens_estimated"] == 2
         finally:
             await client.aclose()
             await close_database(database, writer)

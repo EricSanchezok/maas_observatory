@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import statistics
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -30,7 +30,7 @@ WINDOW_SECONDS = {
     "7d": 604800,
     "30d": 2592000,
 }
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 
 
 class RuntimeHealth:
@@ -88,6 +88,23 @@ def _attempt_reason(outcome: str | None, error_code: str | None) -> str | None:
     return "request_failed"
 
 
+def _p50(values: Sequence[float]) -> float | None:
+    return statistics.median(values) if values else None
+
+
+def _p95(values: Sequence[float]) -> float | None:
+    if len(values) < 10:
+        return None
+    return statistics.quantiles(values, n=100)[94]
+
+
+def _uptime_pct(row: dict[str, Any]) -> float | None:
+    denominator = int(row["total"]) - int(row["maintenance_excluded"])
+    if denominator <= 0:
+        return None
+    return round(100 * int(row["success"]) / denominator, 2)
+
+
 def _etag_document(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -115,7 +132,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="MaaS Observatory API",
-        version="4.0.0",
+        version="5.0.0",
         docs_url="/docs",
         redoc_url=None,
     )
@@ -142,7 +159,41 @@ def create_app(
             """
         )
         expected_fixtures = {item[0] for item in (*SHORT_TEMPLATES, *LONG_SEEDS)}
+        reasoning_by_deployment = {
+            deployment.deployment_id: deployment.capabilities.reasoning
+            for deployment in catalog.deployments
+        }
         summaries: list[dict[str, Any]] = []
+        uptime_by_window: dict[str, dict[str, float | None]] = {}
+        for window_key, seconds in (
+            ("uptime_24h", 86400),
+            ("uptime_7d", 604800),
+            ("uptime_30d", 2592000),
+        ):
+            rows = await database.query(
+                """
+                SELECT r.deployment_id,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN r.outcome='success' THEN 1 ELSE 0 END)
+                           AS success,
+                       SUM(CASE WHEN (r.outcome='skipped'
+                                      AND r.error_code='maintenance')
+                                      OR EXISTS (
+                           SELECT 1 FROM events e
+                           WHERE e.deployment_id=r.deployment_id
+                             AND e.kind='maintenance'
+                             AND r.finished_at>=e.started_at
+                             AND (e.ended_at IS NULL OR r.finished_at<=e.ended_at)
+                       ) THEN 1 ELSE 0 END) AS maintenance_excluded
+                FROM probe_runs r
+                WHERE r.kind='route' AND r.finished_at>=?
+                GROUP BY r.deployment_id
+                """,
+                (isoformat(datetime.now(UTC) - timedelta(seconds=seconds)),),
+            )
+            uptime_by_window[window_key] = {
+                row["deployment_id"]: _uptime_pct(row) for row in rows
+            }
         for deployment in deployments:
             runs = await database.query(
                 """
@@ -193,6 +244,20 @@ def create_app(
                 for _, measurement in successful
                 if measurement.get("output_speed_tps") is not None
             ]
+            stream_start = [
+                float(measurement["stream_start_seconds"])
+                for _, measurement in successful
+                if measurement.get("stream_start_seconds") is not None
+            ]
+            reasoning_tokens = (
+                [
+                    float(measurement["reasoning_tokens_estimated"])
+                    for _, measurement in successful
+                    if measurement.get("reasoning_tokens_estimated") is not None
+                ]
+                if reasoning_by_deployment.get(deployment["deployment_id"])
+                else []
+            )
             latest_payload = None
             measured_at = None
             if latest:
@@ -236,11 +301,20 @@ def create_app(
                     "fixture_count": len(fixtures),
                     "complete_fixture_set": complete_suite,
                     "path_success_rate": path_success,
-                    "first_response_mean": (
-                        statistics.fmean(first_response) if first_response else None
+                    "first_response_p50": _p50(first_response),
+                    "first_response_p95": _p95(first_response),
+                    "output_speed_p50": _p50(output_speed),
+                    "output_speed_p95": _p95(output_speed),
+                    "first_token_p50": _p50(stream_start),
+                    "reasoning_tokens_p50": _p50(reasoning_tokens),
+                    "uptime_24h": uptime_by_window["uptime_24h"].get(
+                        deployment["deployment_id"]
                     ),
-                    "output_speed_mean": (
-                        statistics.fmean(output_speed) if output_speed else None
+                    "uptime_7d": uptime_by_window["uptime_7d"].get(
+                        deployment["deployment_id"]
+                    ),
+                    "uptime_30d": uptime_by_window["uptime_30d"].get(
+                        deployment["deployment_id"]
                     ),
                     "latest": latest_payload,
                     "latest_attempt_outcome": (
@@ -471,6 +545,8 @@ def create_app(
                             "stream_gap_max_seconds",
                             "reported_prompt_tokens",
                             "reported_completion_tokens",
+                            "reasoning_chars",
+                            "reasoning_tokens_estimated",
                         )
                     },
                 }
@@ -523,7 +599,7 @@ def create_app(
                 "deployment_id": item["deployment_id"],
                 "alias": item["alias"],
                 "value": (
-                    item["output_speed_mean"] if item["complete_fixture_set"] else None
+                    item["output_speed_p50"] if item["complete_fixture_set"] else None
                 ),
                 "unit": "tokens/s",
                 "source_kind": "streaming_request",
@@ -546,7 +622,7 @@ def create_app(
                 "reason": (
                     None
                     if item["complete_fixture_set"]
-                    and item["output_speed_mean"] is not None
+                    and item["output_speed_p50"] is not None
                     else "waiting_for_complete_fixture_set"
                 ),
             }
@@ -566,6 +642,90 @@ def create_app(
             freshness=_freshness(newest),
             sample_count=total,
             source_mix={"streaming_requests": total},
+            data=data,
+        )
+
+    @app.api_route("/api/v1/availability", methods=["GET", "HEAD"])
+    async def availability(
+        days: Annotated[int, Query(ge=7, le=30)] = 30,
+    ) -> dict[str, Any]:
+        if days not in (7, 30):
+            raise HTTPException(status_code=400, detail="days must be 7 or 30")
+        cutoff = isoformat(datetime.now(UTC) - timedelta(days=days))
+        deployments = await database.query(
+            """
+            SELECT deployment_id, alias FROM deployments WHERE active=1 ORDER BY alias
+            """
+        )
+        rows = await database.query(
+            """
+            SELECT r.deployment_id, date(r.finished_at) AS day,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN r.outcome='success' THEN 1 ELSE 0 END)
+                       AS success,
+                   SUM(CASE WHEN (r.outcome='skipped'
+                                  AND r.error_code='maintenance')
+                                  OR EXISTS (
+                       SELECT 1 FROM events e
+                       WHERE e.deployment_id=r.deployment_id
+                         AND e.kind='maintenance'
+                         AND r.finished_at>=e.started_at
+                         AND (e.ended_at IS NULL OR r.finished_at<=e.ended_at)
+                   ) THEN 1 ELSE 0 END) AS maintenance_excluded
+            FROM probe_runs r
+            WHERE r.kind='route' AND r.finished_at>=?
+            GROUP BY r.deployment_id, date(r.finished_at)
+            """,
+            (cutoff,),
+        )
+        by_deployment: dict[str, dict[str, dict[str, Any]]] = {}
+        for row in rows:
+            by_deployment.setdefault(row["deployment_id"], {})[row["day"]] = row
+        today = datetime.now(UTC).date()
+        data = []
+        for deployment in deployments:
+            day_rows = by_deployment.get(deployment["deployment_id"], {})
+            daily: list[dict[str, str | float | int | None]] = []
+            for offset in range(days - 1, -1, -1):
+                day = (today - timedelta(days=offset)).isoformat()
+                day_row = day_rows.get(day)
+                if day_row is None:
+                    daily.append(
+                        {
+                            "date": day,
+                            "uptime_pct": None,
+                            "samples": 0,
+                            "maintenance_excluded": 0,
+                        }
+                    )
+                    continue
+                maintenance_excluded = int(day_row["maintenance_excluded"])
+                denominator = int(day_row["total"]) - maintenance_excluded
+                daily.append(
+                    {
+                        "date": day,
+                        "uptime_pct": (
+                            round(100 * int(day_row["success"]) / denominator, 2)
+                            if denominator > 0
+                            else None
+                        ),
+                        "samples": denominator,
+                        "maintenance_excluded": maintenance_excluded,
+                    }
+                )
+            data.append(
+                {
+                    "deployment_id": deployment["deployment_id"],
+                    "alias": deployment["alias"],
+                    "days": days,
+                    "daily": daily,
+                }
+            )
+        return _envelope(
+            window=f"{days}d",
+            freshness=0,
+            sample_count=sum(len(entry["daily"]) for entry in data),
+            source_mix={"route_checks": sum(int(row["total"]) for row in rows)},
             data=data,
         )
 
@@ -644,12 +804,44 @@ def create_app(
                     "first_response_seconds": (
                         "request start to first non-empty visible content"
                     ),
+                    "first_token_seconds": (
+                        "request start to first streamed token "
+                        "(includes reasoning for thinking models)"
+                    ),
                     "output_speed_tps": (
                         "(reported completion tokens - 1) / "
                         "(last output event - first output event)"
                     ),
+                    "first_response_p50": (
+                        "median of first_response_seconds in window"
+                    ),
+                    "first_response_p95": (
+                        "p95 of first_response_seconds; null when sample_count < 10"
+                    ),
+                    "output_speed_p50": "median of output_speed_tps in window",
+                    "output_speed_p95": (
+                        "p95 of output_speed_tps; null when sample_count < 10"
+                    ),
+                    "first_token_p50": "median of stream_start_seconds in window",
+                    "reasoning_tokens_estimated": (
+                        "estimate = ceil(reasoning_chars / 4); not exact counting"
+                    ),
+                    "reasoning_tokens_p50": (
+                        "median of estimated reasoning tokens; "
+                        "only for models with capabilities.reasoning=true"
+                    ),
+                    "uptime_24h": (
+                        "route success % over 24h; maintenance samples excluded"
+                    ),
+                    "uptime_7d": (
+                        "route success % over 7d; maintenance samples excluded"
+                    ),
+                    "uptime_30d": (
+                        "route success % over 30d; maintenance samples excluded"
+                    ),
                     "summary": (
-                        "arithmetic mean across the balanced six-fixture suite"
+                        "median (p50) across the balanced six-fixture suite; "
+                        "p95 only when sample_count >= 10"
                     ),
                 },
             },

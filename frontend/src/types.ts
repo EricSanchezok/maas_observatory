@@ -1,5 +1,5 @@
 export type Quality = "exact" | "incomplete" | "unavailable";
-export type WindowOption = "1h" | "6h" | "24h";
+export type WindowOption = "1h" | "6h" | "24h" | "7d" | "30d";
 export type ResponseState =
   | "current"
   | "collecting"
@@ -8,7 +8,7 @@ export type ResponseState =
   | "maintenance";
 
 export interface Envelope<T> {
-  schema_version: "4";
+  schema_version: "5";
   generated_at: string;
   data_window: string;
   freshness_seconds: number | null;
@@ -57,8 +57,15 @@ export interface ExperienceItem {
   complete_fixture_set: boolean;
   path_success_rate: number | null;
   quality: Quality;
-  first_response_mean: number | null;
-  output_speed_mean: number | null;
+  first_response_p50: number | null;
+  first_response_p95: number | null;
+  output_speed_p50: number | null;
+  output_speed_p95: number | null;
+  first_token_p50: number | null;
+  reasoning_tokens_p50: number | null;
+  uptime_24h: number | null;
+  uptime_7d: number | null;
+  uptime_30d: number | null;
   latest: ResponseMeasurement | null;
   latest_attempt_outcome: "success" | "failed" | "skipped" | null;
   latest_attempt_error_class: string | null;
@@ -147,3 +154,17 @@ export interface ObservatoryEvent {
 }
 
 export type MetricSeries = Record<string, MetricPoint[]>;
+
+export interface AvailabilityDaily {
+  date: string;
+  uptime_pct: number | null;
+  samples: number;
+  maintenance_excluded: number;
+}
+
+export interface AvailabilityItem {
+  deployment_id: string;
+  alias: string;
+  days: number;
+  daily: AvailabilityDaily[];
+}

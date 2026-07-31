@@ -134,3 +134,8 @@ export function coverage(
     percent: total === 0 ? 0 : Math.round((valid / total) * 100)
   };
 }
+
+export function formatUptime(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  return `${formatMetric(value, 1)}%`;
+}

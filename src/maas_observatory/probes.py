@@ -520,6 +520,7 @@ class ProbeRunner:
         outcome = ProbeOutcome.SUCCESS
         error_class = ErrorClass.NONE
         error_code: str | None = None
+        reasoning_chars = 0
         try:
             if not deployment.base_url or not deployment.api_key:
                 raise ProbeConfigurationError("deployment is not configured")
@@ -541,7 +542,7 @@ class ProbeRunner:
             async def consume(client: httpx.AsyncClient) -> None:
                 nonlocal headers_clock, first_event, first_visible, last_event
                 nonlocal completion_tokens, prompt_tokens, finish_reason
-                nonlocal visible_seen, output_seen
+                nonlocal visible_seen, output_seen, reasoning_chars
                 async with client.stream(
                     "POST",
                     f"{base_url.rstrip('/')}/chat/completions",
@@ -596,9 +597,10 @@ class ProbeRunner:
                                 last_event = now
                                 event_times.append(now)
                                 output_seen = True
-                            if content:
-                                first_visible = first_visible or now
-                                visible_seen = True
+                                reasoning_chars += len(reasoning)
+                                if content:
+                                    first_visible = first_visible or now
+                                    visible_seen = True
 
             if self._client is not None and not self._owns_client:
                 await consume(self._client)
@@ -658,6 +660,10 @@ class ProbeRunner:
                 sorted(gaps)[max(0, int(len(gaps) * 0.95) - 1)] if gaps else None
             ),
             "stream_gap_max_seconds": max(gaps) if gaps else None,
+            "reasoning_chars": reasoning_chars if reasoning_chars else None,
+            "reasoning_tokens_estimated": (
+                (reasoning_chars + 3) // 4 if reasoning_chars else None
+            ),
             "finish_reason": finish_reason,
             "operational_profile": operational_profile,
         }
@@ -724,10 +730,11 @@ class ProbeRunner:
             "time_to_headers_seconds": "s",
             "stream_start_seconds": "s",
             "first_response_seconds": "s",
-            "output_speed_tps": "tokens/s",
             "stream_gap_p50_seconds": "s",
             "stream_gap_p95_seconds": "s",
             "stream_gap_max_seconds": "s",
+            "reasoning_chars": "chars",
+            "reasoning_tokens_estimated": "tokens",
         }
         for metric, value in result.measurements.items():
             numeric = float(value) if isinstance(value, (float, int)) else None

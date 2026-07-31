@@ -47,7 +47,7 @@ class ProbeSettings(StrictModel):
     short_max_output_tokens: int = Field(default=1024, ge=2)
     context_max_output_tokens: int = Field(default=1024, ge=2)
     rapid_block_interval_seconds: int = Field(default=60, ge=10)
-    standard_block_interval_seconds: int = Field(default=360, ge=60)
+    standard_block_interval_seconds: int = Field(default=600, ge=60)
     standard_budget: StandardBudget = Field(default_factory=StandardBudget)
 
 

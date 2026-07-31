@@ -68,7 +68,7 @@ class ProbeResult(FrozenModel):
 
 
 class ApiEnvelope(FrozenModel):
-    schema_version: Literal["4"] = "4"
+    schema_version: Literal["5"] = "5"
     generated_at: datetime = Field(default_factory=utc_now)
     data_window: str
     freshness_seconds: float | None

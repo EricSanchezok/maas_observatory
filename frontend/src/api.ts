@@ -1,4 +1,5 @@
 import type {
+  AvailabilityItem,
   CatalogItem,
   CompareItem,
   Envelope,
@@ -101,4 +102,11 @@ export async function fetchExperienceSeries(
       }))
     ])
   );
+}
+
+export async function fetchAvailability(
+  days: 7 | 30,
+  signal?: AbortSignal
+): Promise<Envelope<AvailabilityItem[]>> {
+  return request<AvailabilityItem[]>(`/api/v1/availability?days=${days}`, signal);
 }

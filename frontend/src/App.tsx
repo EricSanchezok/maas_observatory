@@ -21,6 +21,7 @@ function App() {
   const { data, loading, error, refresh, reloadToken } =
     useObservatoryData(dataWindow);
   const models = data?.experience.data ?? [];
+  const availability = data?.availability.data ?? [];
 
   useEffect(() => {
     if (models.length === 0) return;
@@ -107,7 +108,11 @@ function App() {
           )}
         </section>
 
-        <FleetOverview models={models} />
+        <FleetOverview
+          models={models}
+          dataWindow={dataWindow}
+          availability={availability}
+        />
 
         {selected ? (
           <ModelDetail

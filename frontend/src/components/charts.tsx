@@ -17,7 +17,7 @@ import {
   formatMetric,
   withSingleGapBridges
 } from "../lib/format";
-import type { MetricSeries, WindowOption } from "../types";
+import type { AvailabilityDaily, MetricSeries, WindowOption } from "../types";
 
 const tooltipStyle = {
   background: "#12171b",
@@ -174,3 +174,48 @@ export function MetricLineChart({
 }
 
 export const latencyFormatter = formatLatency;
+
+const UPTIME_MINT = "#9be7d8";
+const UPTIME_AMBER = "#e7b978";
+const UPTIME_CORAL = "#f07872";
+const UPTIME_EMPTY = "#3a3f4b";
+
+function uptimeColor(uptimePct: number | null): string {
+  if (uptimePct === null) return UPTIME_EMPTY;
+  if (uptimePct >= 99.5) return UPTIME_MINT;
+  if (uptimePct >= 95) return UPTIME_AMBER;
+  return UPTIME_CORAL;
+}
+
+export function DailyUptimeBars({ daily }: { daily: AvailabilityDaily[] }) {
+  const days = daily.slice(-30);
+  return (
+    <div
+      className="daily-uptime-bars"
+      role="img"
+      aria-label={`Daily uptime over ${days.length} days`}
+    >
+      {days.map((day) => (
+        <span
+          className="daily-uptime-bar"
+          key={day.date}
+          title={`${day.date} · ${
+            day.uptime_pct === null
+              ? "no samples"
+              : `${day.uptime_pct.toFixed(1)}%`
+          } · n=${day.samples}`}
+        >
+          <i
+            style={{
+              height:
+                day.uptime_pct === null
+                  ? "3px"
+                  : `${Math.max(day.uptime_pct, 2)}%`,
+              background: uptimeColor(day.uptime_pct)
+            }}
+          />
+        </span>
+      ))}
+    </div>
+  );
+}

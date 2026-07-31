@@ -1,4 +1,4 @@
-"""Response state derived only from route and real generation checks."""
+"""Response state derived only from route liveness checks."""
 
 from __future__ import annotations
 
@@ -46,15 +46,14 @@ class StateEngine:
         )
         attempts = await self.database.query(
             """
-            SELECT finished_at, outcome, error_class, error_code,
-                   scheduler_lag_seconds, measurement_json
+            SELECT finished_at
             FROM probe_runs
             WHERE deployment_id=?
               AND kind IN ('experience_short', 'experience_context')
               AND profile_id=? AND definition_version=?
               AND suite_version=? AND collection_mode=?
               AND outcome!='skipped'
-            ORDER BY finished_at DESC LIMIT 3
+            ORDER BY finished_at DESC LIMIT 1
             """,
             (
                 deployment_id,
@@ -74,58 +73,30 @@ class StateEngine:
                 last_route_at,
                 last_response_at,
             )
-        if not attempts:
+        if not routes:
             return (
                 ResponseState.COLLECTING,
                 ["first_check_scheduled"],
                 last_route_at,
-                None,
-            )
-        latest = attempts[0]
-        if latest["outcome"] != "success":
-            return (
-                ResponseState.UNAVAILABLE,
-                [str(latest["error_code"] or "latest_request_failed")],
-                last_route_at,
                 last_response_at,
             )
-        allowed_lag = self.settings.interval_for()
-        if (
-            latest["scheduler_lag_seconds"] is not None
-            and float(latest["scheduler_lag_seconds"]) > allowed_lag
-        ):
-            return (
-                ResponseState.DELAYED,
-                ["scheduler_delayed"],
-                last_route_at,
-                last_response_at,
-            )
-        route_current = bool(
-            routes
-            and routes[0]["outcome"] == "success"
-            and self._age(routes[0]["finished_at"])
+        route_current = (
+            self._age(routes[0]["finished_at"])
             <= self.settings.probes.route_interval_seconds * 2
         )
-        response_current = (
-            self._age(latest["finished_at"]) <= self.settings.interval_for() * 2
-        )
-        measurement = json.loads(latest["measurement_json"])
-        has_visible_response = measurement.get("first_response_seconds") is not None
-        if route_current and response_current and has_visible_response:
+        if route_current:
             return (
                 ResponseState.CURRENT,
-                ["recent_route_and_response"],
+                ["recent_route_check"],
                 last_route_at,
                 last_response_at,
             )
-        reasons = []
-        if not route_current:
-            reasons.append("route_check_delayed")
-        if not response_current:
-            reasons.append("response_check_delayed")
-        if not has_visible_response:
-            reasons.append("visible_response_unavailable")
-        return ResponseState.DELAYED, reasons, last_route_at, last_response_at
+        return (
+            ResponseState.DELAYED,
+            ["route_check_delayed"],
+            last_route_at,
+            last_response_at,
+        )
 
     @staticmethod
     def _age(timestamp: str) -> float:

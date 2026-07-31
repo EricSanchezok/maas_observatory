@@ -23,7 +23,7 @@ probes:
   short_max_output_tokens: 1024
   context_max_output_tokens: 1024
   rapid_block_interval_seconds: 60
-  standard_block_interval_seconds: 360
+  standard_block_interval_seconds: 600
   standard_budget:
     response_requests: 240
     output_tokens: 245760

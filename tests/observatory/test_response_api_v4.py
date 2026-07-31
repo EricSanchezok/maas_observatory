@@ -32,6 +32,20 @@ def test_response_state_transitions_and_measurement_errors(tmp_path: Path) -> No
                 ResponseState.COLLECTING,
                 ["first_check_scheduled"],
             )
+            old = isoformat(datetime.now(UTC) - timedelta(hours=1))
+            await insert_probe(
+                database,
+                deployment_id,
+                kind="route",
+                profile_id="",
+                outcome="success",
+                finished_at=old,
+            )
+            await insert_probe(database, deployment_id)
+            state, reasons, _, _ = await engine.evaluate(deployment_id)
+            assert state == ResponseState.DELAYED
+            assert reasons == ["route_check_delayed"]
+
             await insert_probe(
                 database,
                 deployment_id,
@@ -39,30 +53,10 @@ def test_response_state_transitions_and_measurement_errors(tmp_path: Path) -> No
                 profile_id="",
                 outcome="success",
             )
-            await insert_probe(database, deployment_id)
             state, _, _, _ = await engine.evaluate(deployment_id)
             assert state == ResponseState.CURRENT
 
-            await database.write(
-                """
-                UPDATE probe_runs SET scheduler_lag_seconds=999
-                WHERE id=(SELECT MAX(id) FROM probe_runs
-                          WHERE deployment_id=? AND kind='experience_short')
-                """,
-                (deployment_id,),
-            )
-            state, reasons, _, _ = await engine.evaluate(deployment_id)
-            assert state == ResponseState.DELAYED
-            assert reasons == ["scheduler_delayed"]
-            await database.write(
-                """
-                UPDATE probe_runs SET scheduler_lag_seconds=0
-                WHERE id=(SELECT MAX(id) FROM probe_runs
-                          WHERE deployment_id=? AND kind='experience_short')
-                """,
-                (deployment_id,),
-            )
-
+            # Generation failures no longer flip the pill: a fresh route keeps CURRENT.
             await insert_probe(
                 database,
                 deployment_id,
@@ -71,9 +65,7 @@ def test_response_state_transitions_and_measurement_errors(tmp_path: Path) -> No
                 error_code="streaming_usage_missing",
             )
             state, reasons, _, _ = await engine.evaluate(deployment_id)
-            assert state == ResponseState.UNAVAILABLE
-            assert reasons == ["streaming_usage_missing"]
-
+            assert state == ResponseState.CURRENT
             for _ in range(2):
                 await insert_probe(
                     database,
@@ -83,7 +75,21 @@ def test_response_state_transitions_and_measurement_errors(tmp_path: Path) -> No
                     error_code="http_503",
                 )
             state, _, _, _ = await engine.evaluate(deployment_id)
+            assert state == ResponseState.CURRENT
+
+            # A failed route liveness check marks UNAVAILABLE.
+            await insert_probe(
+                database,
+                deployment_id,
+                kind="route",
+                profile_id="",
+                outcome="failed",
+                error_class="service_error",
+                error_code="http_503",
+            )
+            state, reasons, _, _ = await engine.evaluate(deployment_id)
             assert state == ResponseState.UNAVAILABLE
+            assert reasons == ["http_503"]
             await engine.persist(deployment_id, state, ["confirmed"], None, None)
             assert await database.scalar("SELECT COUNT(*) FROM events") == 1
         finally:
@@ -112,7 +118,7 @@ def test_stale_response_is_delayed_and_maintenance_wins(tmp_path: Path) -> None:
             await insert_probe(database, deployment_id, finished_at=old)
             state, reasons, _, _ = await engine.evaluate(deployment_id)
             assert state == ResponseState.DELAYED
-            assert {"route_check_delayed", "response_check_delayed"} <= set(reasons)
+            assert reasons == ["route_check_delayed"]
             await engine.persist(
                 deployment_id,
                 ResponseState.MAINTENANCE,
@@ -181,7 +187,7 @@ def test_api_schema_v4_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> N
         assert client.get("/readyz").status_code == 200
         response = client.get("/api/v1/experience/overview")
         assert response.status_code == 200
-        assert response.json()["schema_version"] == "4"
+        assert response.json()["schema_version"] == "5"
         item = next(
             row
             for row in response.json()["data"]
@@ -190,8 +196,12 @@ def test_api_schema_v4_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> N
         assert item["sample_count"] == 6
         assert item["fixture_count"] == 6
         assert item["complete_fixture_set"] is True
-        assert item["first_response_mean"] == 0.65
-        assert item["output_speed_mean"] == 14.5
+        assert item["first_response_p50"] == 0.65
+        assert item["first_response_p95"] is None  # n=6 < 10
+        assert item["output_speed_p50"] == 14.5
+        assert item["output_speed_p95"] is None  # n=6 < 10
+        assert item["uptime_24h"] is None  # no route probes seeded
+        assert item["uptime_7d"] is None
         assert item["latest"] is not None
         etag = response.headers["etag"]
         assert (
@@ -245,7 +255,9 @@ def test_api_latest_sample_before_summary_and_meta_is_secret_safe(
         ).json()["data"]
         assert data["sample_count"] == 1
         assert data["latest"]["first_response_seconds"] == 0.5
-        assert data["first_response_mean"] == 0.5
+        assert data["first_response_p50"] == 0.5
+        assert data["first_response_p95"] is None  # n=1 < 10
+        assert data["latest_attempt_outcome"] == "success"
         meta_text = client.get("/api/v1/meta").text.lower()
         assert "response-suite-v4" in meta_text
         assert "aggregate_output" not in meta_text
@@ -259,3 +271,54 @@ def test_api_latest_sample_before_summary_and_meta_is_secret_safe(
             client.get("/api/v1/deployments/unknown/experience/latest").status_code
             == 404
         )
+
+
+def test_generation_failure_keeps_pill_current_but_reports_attempt(
+    tmp_path: Path,
+) -> None:
+    async def seed() -> tuple[object, object, object]:
+        settings = make_settings(tmp_path)
+        catalog = configured_catalog()
+        database, writer = await open_database(settings, catalog)
+        deployment_id = catalog.deployments[0].deployment_id
+        await database.write(
+            """
+            INSERT INTO current_states(
+                deployment_id, response_state, reasons_json, evaluated_at
+            ) VALUES (?, 'current', '[]', ?)
+            """,
+            (deployment_id, isoformat()),
+        )
+        await insert_probe(
+            database,
+            deployment_id,
+            kind="route",
+            profile_id="",
+            outcome="success",
+        )
+        await insert_probe(
+            database,
+            deployment_id,
+            outcome="failed",
+            error_class="service_error",
+            error_code="http_503",
+        )
+        await close_database(database, writer)
+        return settings, catalog, database
+
+    settings, catalog, database = asyncio.run(seed())
+    app = create_app(
+        database, catalog, settings, RuntimeHealth(), frontend_dir=tmp_path
+    )
+    deployment_id = catalog.deployments[0].deployment_id
+    with TestClient(app) as client:
+        item = next(
+            row
+            for row in client.get("/api/v1/experience/overview").json()["data"]
+            if row["deployment_id"] == deployment_id
+        )
+        # R1: a failed generation attempt must not flip the availability pill.
+        assert item["response_state"] == "current"
+        assert item["latest_attempt_outcome"] == "failed"
+        assert item["latest_attempt_error_code"] == "http_503"
+        assert item["latest_attempt_reason"] == "request_failed"

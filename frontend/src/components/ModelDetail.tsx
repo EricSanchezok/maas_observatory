@@ -1,4 +1,5 @@
 import {
+  Brain,
   CaretDown,
   Check,
   Gauge,
@@ -115,11 +116,14 @@ export function ModelDetail({
   responseSeries: MetricSeries;
   loading: boolean;
 }) {
+  const isReasoning = selected.reasoning_tokens_p50 !== null;
+  const firstToken = selected.first_token_p50;
   const first =
-    selected.first_response_mean ??
+    selected.first_response_p50 ??
     latest(responseSeries.first_response_seconds);
+  const reasoningTokens = selected.reasoning_tokens_p50;
   const speed =
-    selected.output_speed_mean ??
+    selected.output_speed_p50 ??
     latest(responseSeries.output_speed_tps);
 
   return (
@@ -148,24 +152,52 @@ export function ModelDetail({
             <section className="detail-block performance-block">
               <div className="detail-block-head">
                 <div>
-                  <h3>Average response</h3>
+                  <h3>Median response</h3>
                 </div>
                 <p>
-                  {selected.sample_count} recent checks
+                  median · n={selected.sample_count}
                 </p>
               </div>
               <div className="metric-grid metric-grid-two">
-                <MetricTile
-                  label="First response"
-                  value={formatLatency(first)}
-                  icon={<Timer size={18} />}
-                />
-                <MetricTile
-                  label="Output speed"
-                  value={formatMetric(speed)}
-                  unit="tok/s"
-                  icon={<Gauge size={18} />}
-                />
+                {isReasoning ? (
+                  <>
+                    <MetricTile
+                      label="First token (含推理)"
+                      value={formatLatency(firstToken)}
+                      icon={<Timer size={18} />}
+                    />
+                    <MetricTile
+                      label="First answer"
+                      value={formatLatency(first)}
+                      icon={<Timer size={18} />}
+                    />
+                    <MetricTile
+                      label="推理 tokens（估计）"
+                      value={formatMetric(reasoningTokens, 0)}
+                      icon={<Brain size={18} />}
+                    />
+                    <MetricTile
+                      label="Output speed"
+                      value={formatMetric(speed)}
+                      unit="tok/s"
+                      icon={<Gauge size={18} />}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <MetricTile
+                      label="First response"
+                      value={formatLatency(first)}
+                      icon={<Timer size={18} />}
+                    />
+                    <MetricTile
+                      label="Output speed"
+                      value={formatMetric(speed)}
+                      unit="tok/s"
+                      icon={<Gauge size={18} />}
+                    />
+                  </>
+                )}
               </div>
               <div className="experience-chart-grid">
                 <MetricLineChart

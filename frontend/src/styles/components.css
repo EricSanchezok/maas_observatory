@@ -89,7 +89,7 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-5);
-  margin: var(--space-6) 0 var(--space-5);
+  margin: var(--space-5) 0 var(--space-4);
 }
 
 .experience-pair {
@@ -100,6 +100,57 @@
   background:
     linear-gradient(rgba(240, 120, 114, 0.035), rgba(240, 120, 114, 0.035)),
     var(--surface);
+}
+.experience-uptime {
+  margin: var(--space-5) 0 var(--space-2);
+}
+
+.experience-uptime-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.experience-uptime-head span {
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+  font-size: 12px;
+}
+
+.experience-uptime-head strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.daily-uptime-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 28px;
+}
+
+.daily-uptime-bar {
+  display: flex;
+  flex: 1 1 0;
+  align-items: flex-end;
+  min-width: 0;
+  height: 100%;
+}
+
+.daily-uptime-bar i {
+  display: block;
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  opacity: 0.9;
+}
+
+.experience-card-note {
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+  font-size: 12px;
 }
 
 .live-failure {
