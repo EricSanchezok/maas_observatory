@@ -16,7 +16,18 @@ import httpx
 
 from maas_common.catalog import ModelCatalog, ModelDeployment
 from maas_observatory.database import Database, isoformat
-from maas_observatory.models import ErrorClass, ProbeKind, ProbeOutcome, ProbeResult
+from maas_observatory.fixtures import (
+    FIXTURE_IDS,
+    all_metadata,
+    get_payload,
+    tier_for,
+)
+from maas_observatory.models import (
+    ErrorClass,
+    ProbeKind,
+    ProbeOutcome,
+    ProbeResult,
+)
 from maas_observatory.settings import (
     CollectionMode,
     ExperienceSettings,
@@ -25,41 +36,7 @@ from maas_observatory.settings import (
 
 CANARY_PROMPT = "Return exactly the lowercase word ok."
 
-SHORT_TEMPLATES = (
-    (
-        "response-01",
-        "Check {nonce}. Explain in plain language why a monitoring request should "
-        "be small and repeatable. Use complete sentences and no lists.",
-    ),
-    (
-        "response-02",
-        "Check {nonce}. Describe how queueing can change the time a person waits "
-        "for a model response. Use concise plain text and no headings.",
-    ),
-    (
-        "response-03",
-        "Check {nonce}. Explain why response speed and model quality are different "
-        "measurements. Use complete sentences and no lists.",
-    ),
-)
-
-LONG_SEEDS = (
-    (
-        "response-04",
-        "A scheduled measurement records request timing, output events, and reported "
-        "token usage without retaining content. ",
-    ),
-    (
-        "response-05",
-        "A reproducible response check uses fixed request shapes, transparent "
-        "profiles, and one observer location. ",
-    ),
-    (
-        "response-06",
-        "A low-concurrency monitor separates transport failures, service failures, "
-        "and measurement limitations. ",
-    ),
-)
+_FIXTURE_ORDER: list[str] = list(FIXTURE_IDS)
 
 
 class ProbeConfigurationError(ValueError):
@@ -68,7 +45,6 @@ class ProbeConfigurationError(ValueError):
 
 def _observer_http_client(timeout: httpx.Timeout) -> httpx.AsyncClient:
     """Create a direct client that cannot inherit workstation proxy settings."""
-
     return httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=False,
@@ -91,75 +67,58 @@ def block_nonce(epoch: int, block_index: int) -> str:
     return hashlib.sha256(f"{epoch}:{block_index}".encode()).hexdigest()[:16]
 
 
-def _long_prompt(seed: str, nonce: str) -> str:
-    prefix = f"Check {nonce}. "
-    suffix = (
-        "\n\nSummarize the main operational trade-offs in concise plain text. "
-        "Do not use headings, lists, quotations, or tools."
-    )
-    size = 16 * 1024
-    body_size = size - len(prefix.encode()) - len(suffix.encode())
-    repeated = (seed * ((body_size // len(seed.encode())) + 2)).encode()[:body_size]
-    prompt = prefix.encode() + repeated + suffix.encode()
-    return prompt.decode("utf-8", errors="ignore")
+def fixture_prompt(fixture_id: str, nonce: str) -> tuple[str, dict[str, Any]]:
+    """Return the fixture_id and an OpenAI payload dict with nonce injected.
 
-
-def fixture_prompt(kind: ProbeKind, fixture_index: int, nonce: str) -> tuple[str, str]:
-    if kind == ProbeKind.EXPERIENCE_SHORT:
-        fixture_id, template = SHORT_TEMPLATES[fixture_index % len(SHORT_TEMPLATES)]
-        return fixture_id, template.format(nonce=nonce)
-    if kind == ProbeKind.EXPERIENCE_CONTEXT:
-        fixture_id, seed = LONG_SEEDS[fixture_index % len(LONG_SEEDS)]
-        return fixture_id, _long_prompt(seed, nonce)
-    return "canary", CANARY_PROMPT
+    The nonce is injected into the final user message content.
+    """
+    meta = all_metadata().get(fixture_id)
+    if meta is None:
+        raise ValueError(f"unknown fixture_id: {fixture_id}")
+    payload = get_payload(fixture_id)
+    # Shallow copy so we can inject nonce into the final user message
+    payload = {**payload}
+    messages = [dict(m) for m in payload["messages"]]
+    last_msg = dict(messages[-1])
+    last_msg["content"] = str(last_msg["content"]).replace("{nonce}", nonce)
+    messages[-1] = last_msg
+    payload["messages"] = messages
+    return fixture_id, payload
 
 
 def fixture_hashes() -> dict[str, str]:
-    hashes = {
-        fixture_id: hashlib.sha256(template.encode()).hexdigest()
-        for fixture_id, template in SHORT_TEMPLATES
-    }
-    hashes.update(
-        {
-            fixture_id: hashlib.sha256(
-                _long_prompt(seed, "{nonce:016}").encode()
-            ).hexdigest()
-            for fixture_id, seed in LONG_SEEDS
-        }
-    )
-    return hashes
+    """Return {fixture_id: sha256} for all six agent fixtures."""
+    from maas_observatory.fixtures import fixture_hashes as _fixture_hashes
+
+    return _fixture_hashes()
 
 
 def profile_definitions(
     settings: ExperienceSettings, probes: ProbeSettings
 ) -> list[dict[str, Any]]:
     hashes = fixture_hashes()
+    meta = all_metadata()
     return [
         {
             "profile_id": settings.response_profile_id,
             "definition_version": settings.definition_version,
             "suite_version": settings.suite_version,
-            "kind": "balanced_response",
+            "kind": "agent_response",
             "streaming": True,
             "temperature": 0,
             "fixtures": [
                 {
-                    "fixture_id": fixture_id,
-                    "input_shape": "compact",
-                    "configured_max_output_tokens": (probes.short_max_output_tokens),
-                    "sha256": hashes[fixture_id],
+                    "fixture_id": fid,
+                    "context_tier": meta[fid]["context_tier"],
+                    "configured_max_output_tokens": probes.experience_max_output_tokens,
+                    "target_input_tokens": meta[fid]["target_input_tokens"],
+                    "ref_prompt_tokens": meta[fid]["ref_prompt_tokens"],
+                    "payload_bytes": meta[fid]["payload_bytes"],
+                    "context_bytes": meta[fid]["context_bytes"],
+                    "reference_tokenizer": meta[fid]["reference_tokenizer"],
+                    "sha256": hashes[fid],
                 }
-                for fixture_id, _ in SHORT_TEMPLATES
-            ]
-            + [
-                {
-                    "fixture_id": fixture_id,
-                    "input_shape": "extended",
-                    "configured_max_output_tokens": (probes.context_max_output_tokens),
-                    "fixture_bytes": 16 * 1024,
-                    "sha256": hashes[fixture_id],
-                }
-                for fixture_id, _ in LONG_SEEDS
+                for fid in FIXTURE_IDS
             ],
         },
     ]
@@ -180,26 +139,27 @@ def balanced_order(
 def _request_payload(
     deployment: ModelDeployment,
     *,
-    prompt: str,
+    payload: dict[str, Any],
     operational_profile: str,
     max_tokens: int,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
+    req: dict[str, Any] = {
         "model": deployment.model_id,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": payload["messages"],
+        "tools": payload.get("tools"),
         "max_tokens": max_tokens,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
     if deployment.capabilities.temperature:
-        payload["temperature"] = 0
-    payload.update(deployment.request_defaults)
+        req["temperature"] = 0
+    req.update(deployment.request_defaults)
     if operational_profile != "default-only":
         profile = deployment.profiles.get(operational_profile)
         if profile is None:
             raise ValueError(f"undefined profile {operational_profile}")
-        payload.update(profile.request_overrides)
-    return payload
+        req.update(profile.request_overrides)
+    return req
 
 
 def _text_from_delta_value(value: Any) -> str:
@@ -226,6 +186,15 @@ def _output_from_delta(delta: dict[str, Any]) -> tuple[str, str]:
         or _text_from_delta_value(delta.get("reasoning_details"))
     )
     return content, reasoning
+
+
+def _check_tool_call(choices: list[dict[str, Any]]) -> bool:
+    """Return True if any choice contains a tool call delta."""
+    for choice in choices:
+        delta = choice.get("delta", {})
+        if isinstance(delta, dict) and "tool_calls" in delta:
+            return True
+    return False
 
 
 class ProbeRunner:
@@ -333,61 +302,108 @@ class ProbeRunner:
             )
         )
 
-    async def _standard_budget_available(
-        self, deployment: ModelDeployment, kind: ProbeKind, max_tokens: int
-    ) -> tuple[bool, str | None]:
-        if self.collection_mode == "rapid":
-            return True, None
+    async def _ledger_row(self, deployment_id: str) -> dict[str, int]:
+        today = datetime.now(UTC).date().isoformat()
         rows = await self.database.query(
             """
-            SELECT * FROM budget_usage
+            SELECT * FROM budget_ledger
             WHERE deployment_id=? AND budget_date=?
             """,
-            (deployment.deployment_id, datetime.now(UTC).date().isoformat()),
+            (deployment_id, today),
         )
-        usage = (
-            rows[0]
-            if rows
-            else {
-                "short_requests": 0,
-                "context_requests": 0,
-                "output_tokens": 0,
+        if rows:
+            r = rows[0]
+            return {
+                "requests_reserved": int(r["requests_reserved"]),
+                "requests_settled": int(r["requests_settled"]),
+                "input_tokens_reserved": int(r["input_tokens_reserved"]),
+                "input_tokens_settled": int(r["input_tokens_settled"]),
+                "output_tokens_reserved": int(r["output_tokens_reserved"]),
+                "output_tokens_settled": int(r["output_tokens_settled"]),
             }
-        )
-        budget = self.settings.standard_budget
-        if (
-            int(usage["short_requests"]) + int(usage["context_requests"])
-            >= budget.response_requests
-        ):
+        return {
+            "requests_reserved": 0,
+            "requests_settled": 0,
+            "input_tokens_reserved": 0,
+            "input_tokens_settled": 0,
+            "output_tokens_reserved": 0,
+            "output_tokens_settled": 0,
+        }
+
+    async def _budget_available(
+        self, deployment: ModelDeployment, ref_prompt_tokens: int, max_tokens: int
+    ) -> tuple[bool, str | None]:
+        ledger = await self._ledger_row(deployment.deployment_id)
+        budget = self.settings.daily_budget
+        if ledger["requests_reserved"] + ledger["requests_settled"] >= budget.requests:
             return False, "daily_response_budget"
-        if int(usage["output_tokens"]) + max_tokens > budget.output_tokens:
+        if (
+            ledger["input_tokens_reserved"]
+            + ledger["input_tokens_settled"]
+            + ref_prompt_tokens
+            > budget.input_tokens
+        ):
+            return False, "daily_input_token_budget"
+        if (
+            ledger["output_tokens_reserved"]
+            + ledger["output_tokens_settled"]
+            + max_tokens
+            > budget.output_tokens
+        ):
             return False, "daily_output_token_budget"
         return True, None
 
-    async def _reserve_standard_budget(
-        self, deployment: ModelDeployment, kind: ProbeKind, max_tokens: int
+    async def _reserve_budget(
+        self, deployment: ModelDeployment, ref_prompt_tokens: int, max_tokens: int
     ) -> None:
-        if self.collection_mode == "rapid":
-            return
-        short = int(kind == ProbeKind.EXPERIENCE_SHORT)
-        context = int(kind == ProbeKind.EXPERIENCE_CONTEXT)
+        today = datetime.now(UTC).date().isoformat()
         await self.database.write(
             """
-            INSERT INTO budget_usage(
-                deployment_id, budget_date, short_requests,
-                context_requests, output_tokens
-            ) VALUES (?, ?, ?, ?, ?)
+            INSERT INTO budget_ledger(
+                deployment_id, budget_date, requests_reserved,
+                input_tokens_reserved, output_tokens_reserved
+            ) VALUES (?, ?, 1, ?, ?)
             ON CONFLICT(deployment_id, budget_date) DO UPDATE SET
-                short_requests=short_requests+excluded.short_requests,
-                context_requests=context_requests+excluded.context_requests,
-                output_tokens=output_tokens+excluded.output_tokens
+                requests_reserved=requests_reserved+1,
+                input_tokens_reserved=input_tokens_reserved+excluded.input_tokens_reserved,
+                output_tokens_reserved=output_tokens_reserved+excluded.output_tokens_reserved
+            """,
+            (deployment.deployment_id, today, ref_prompt_tokens, max_tokens),
+        )
+
+    async def _settle_budget(
+        self,
+        deployment: ModelDeployment,
+        ref_prompt_tokens: int,
+        max_tokens: int,
+        actual_prompt: int | None,
+        actual_completion: int | None,
+    ) -> None:
+        today = datetime.now(UTC).date().isoformat()
+        input_settled = (
+            actual_prompt if actual_prompt is not None else ref_prompt_tokens
+        )
+        output_settled = (
+            actual_completion if actual_completion is not None else max_tokens
+        )
+        await self.database.write(
+            """
+            UPDATE budget_ledger SET
+                requests_reserved=MAX(0, requests_reserved-1),
+                requests_settled=requests_settled+1,
+                input_tokens_reserved=MAX(0, input_tokens_reserved-?),
+                input_tokens_settled=input_tokens_settled+?,
+                output_tokens_reserved=MAX(0, output_tokens_reserved-?),
+                output_tokens_settled=output_tokens_settled+?
+            WHERE deployment_id=? AND budget_date=?
             """,
             (
-                deployment.deployment_id,
-                datetime.now(UTC).date().isoformat(),
-                short,
-                context,
+                ref_prompt_tokens,
+                input_settled,
                 max_tokens,
+                output_settled,
+                deployment.deployment_id,
+                today,
             ),
         )
 
@@ -397,6 +413,7 @@ class ProbeRunner:
         kind: ProbeKind,
         *,
         fixture_id: str | None = None,
+        prompt_data: dict[str, Any] | None = None,
         prompt: str | None = None,
         block_id: str | None = None,
         scheduled_at: datetime | None = None,
@@ -405,8 +422,7 @@ class ProbeRunner:
     ) -> ProbeResult:
         if kind not in {
             ProbeKind.CANARY,
-            ProbeKind.EXPERIENCE_SHORT,
-            ProbeKind.EXPERIENCE_CONTEXT,
+            ProbeKind.EXPERIENCE,
             ProbeKind.CONFIRMATION,
         }:
             raise ValueError("unsupported generation probe kind")
@@ -414,12 +430,20 @@ class ProbeRunner:
         profile_id: str | None = None
         max_tokens = self.settings.canary_max_output_tokens
         selected_prompt = prompt or CANARY_PROMPT
-        if kind == ProbeKind.EXPERIENCE_SHORT:
+        payload: dict[str, Any] | None = None
+        ref_prompt_tokens = 0
+        context_tier: str | None = None
+        if kind == ProbeKind.EXPERIENCE:
+            if prompt_data is None:
+                raise ValueError("experience probes require prompt_data")
             profile_id = self.experience.response_profile_id
-            max_tokens = self.settings.short_max_output_tokens
-        elif kind == ProbeKind.EXPERIENCE_CONTEXT:
-            profile_id = self.experience.response_profile_id
-            max_tokens = self.settings.context_max_output_tokens
+            max_tokens = self.settings.experience_max_output_tokens
+            selected_prompt = prompt_data["messages"][-1]["content"]
+            payload = prompt_data
+            if fixture_id is not None:
+                context_tier = str(tier_for(fixture_id))
+                meta = all_metadata().get(fixture_id, {})
+                ref_prompt_tokens = meta.get("ref_prompt_tokens", 0)
         if not force and await self._maintenance(deployment.deployment_id):
             return await self._persist_skipped(
                 deployment,
@@ -428,6 +452,7 @@ class ProbeRunner:
                 profile_id,
                 fixture_id,
                 block_id,
+                context_tier,
                 "maintenance",
             )
         try:
@@ -440,35 +465,41 @@ class ProbeRunner:
                 profile_id,
                 fixture_id,
                 block_id,
+                context_tier,
                 "profile_undefined",
                 measurement=True,
             )
         async with self._inference_lock(deployment.deployment_id):
-            allowed, reason = await self._standard_budget_available(
-                deployment, kind, max_tokens
-            )
-            if not force and not allowed:
-                return await self._persist_skipped(
-                    deployment,
-                    kind,
-                    scheduled,
-                    profile_id,
-                    fixture_id,
-                    block_id,
-                    reason,
+            if kind == ProbeKind.EXPERIENCE:
+                allowed, reason = await self._budget_available(
+                    deployment, ref_prompt_tokens, max_tokens
                 )
-            await self._reserve_standard_budget(deployment, kind, max_tokens)
+                if not allowed:
+                    return await self._persist_skipped(
+                        deployment,
+                        kind,
+                        scheduled,
+                        profile_id,
+                        fixture_id,
+                        block_id,
+                        context_tier,
+                        reason,
+                    )
+                await self._reserve_budget(deployment, ref_prompt_tokens, max_tokens)
             return await self._stream_generation(
                 deployment,
                 kind,
                 profile_id=profile_id or operational_profile,
                 operational_profile=operational_profile,
                 prompt=selected_prompt,
+                payload=payload,
                 max_tokens=max_tokens,
                 fixture_id=fixture_id,
                 block_id=block_id,
+                context_tier=context_tier,
                 scheduled_at=scheduled,
                 confirmation_of=confirmation_of,
+                ref_prompt_tokens=ref_prompt_tokens,
             )
 
     async def _persist_skipped(
@@ -479,6 +510,7 @@ class ProbeRunner:
         profile_id: str | None,
         fixture_id: str | None,
         block_id: str | None,
+        context_tier: str | None,
         reason: str | None,
         *,
         measurement: bool = False,
@@ -499,6 +531,7 @@ class ProbeRunner:
             collection_mode=self.collection_mode,
             fixture_id=fixture_id,
             block_id=block_id,
+            context_tier=context_tier,
         )
         await self.persist(result)
         return result
@@ -511,11 +544,14 @@ class ProbeRunner:
         profile_id: str,
         operational_profile: str,
         prompt: str,
+        payload: dict[str, Any] | None,
         max_tokens: int,
         fixture_id: str | None,
         block_id: str | None,
+        context_tier: str | None,
         scheduled_at: datetime,
         confirmation_of: int | None,
+        ref_prompt_tokens: int,
     ) -> ProbeResult:
         started = datetime.now(UTC)
         scheduler_lag = max(0.0, (started - scheduled_at).total_seconds())
@@ -527,9 +563,11 @@ class ProbeRunner:
         event_times: list[float] = []
         completion_tokens: int | None = None
         prompt_tokens: int | None = None
+        reported_reasoning_tokens: int | None = None
         finish_reason: str | None = None
         visible_seen = False
         output_seen = False
+        tool_call_detected = False
         outcome = ProbeOutcome.SUCCESS
         error_class = ErrorClass.NONE
         error_code: str | None = None
@@ -539,12 +577,23 @@ class ProbeRunner:
                 raise ProbeConfigurationError("deployment is not configured")
             base_url = deployment.base_url
             api_key = deployment.api_key
-            payload = _request_payload(
-                deployment,
-                prompt=prompt,
-                operational_profile=operational_profile,
-                max_tokens=max_tokens,
-            )
+            if payload is not None:
+                req_payload = _request_payload(
+                    deployment,
+                    payload=payload,
+                    operational_profile=operational_profile,
+                    max_tokens=max_tokens,
+                )
+            else:
+                req_payload = _request_payload(
+                    deployment,
+                    payload={
+                        "messages": [{"role": "user", "content": prompt}],
+                        "tools": None,
+                    },
+                    operational_profile=operational_profile,
+                    max_tokens=max_tokens,
+                )
             timeout = httpx.Timeout(
                 connect=30,
                 read=self.settings.response_start_timeout_seconds,
@@ -554,13 +603,14 @@ class ProbeRunner:
 
             async def consume(client: httpx.AsyncClient) -> None:
                 nonlocal headers_clock, first_event, first_visible, last_event
-                nonlocal completion_tokens, prompt_tokens, finish_reason
-                nonlocal visible_seen, output_seen, reasoning_chars
+                nonlocal completion_tokens, prompt_tokens, reported_reasoning_tokens
+                nonlocal finish_reason, visible_seen, output_seen, reasoning_chars
+                nonlocal tool_call_detected
                 async with client.stream(
                     "POST",
                     f"{base_url.rstrip('/')}/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}"},
-                    json=payload,
+                    json=req_payload,
                 ) as response:
                     headers_clock = monotonic()
                     response.raise_for_status()
@@ -592,9 +642,22 @@ class ProbeRunner:
                                 completion_tokens = usage["completion_tokens"]
                             if isinstance(usage.get("prompt_tokens"), int):
                                 prompt_tokens = usage["prompt_tokens"]
+                            completion_details = usage.get("completion_tokens_details")
+                            if isinstance(completion_details, dict) and isinstance(
+                                completion_details.get("reasoning_tokens"), int
+                            ):
+                                reported_reasoning_tokens = completion_details[
+                                    "reasoning_tokens"
+                                ]
+                            elif isinstance(usage.get("reasoning_tokens"), int):
+                                reported_reasoning_tokens = usage["reasoning_tokens"]
                         choices = event.get("choices", [])
                         if not isinstance(choices, list):
                             raise ValueError("invalid choices")
+                        event_has_tool_call = _check_tool_call(choices)
+                        if event_has_tool_call:
+                            tool_call_detected = True
+                        event_had_output = False
                         for choice in choices:
                             if not isinstance(choice, dict):
                                 continue
@@ -609,23 +672,40 @@ class ProbeRunner:
                                 first_event = first_event or now
                                 last_event = now
                                 event_times.append(now)
+                                event_had_output = True
                                 output_seen = True
                                 reasoning_chars += len(reasoning)
                                 if content:
                                     first_visible = first_visible or now
                                     visible_seen = True
+                        if event_has_tool_call and not event_had_output:
+                            now = monotonic()
+                            first_event = first_event or now
+                            last_event = now
+                            event_times.append(now)
+                            output_seen = True
 
             if self._client is not None and not self._owns_client:
                 await consume(self._client)
             else:
                 async with _observer_http_client(timeout) as client:
                     await consume(client)
+            if tool_call_detected:
+                raise RuntimeError("unexpected_tool_call")
             if not visible_seen:
                 raise RuntimeError("empty_visible_output")
         except Exception as exc:
             outcome = ProbeOutcome.FAILED
-            if isinstance(exc, RuntimeError) and str(exc) == "empty_visible_output":
-                error_class, error_code = ErrorClass.SERVICE, "empty_visible_output"
+            if isinstance(exc, RuntimeError):
+                reason = str(exc)
+                if reason == "empty_visible_output":
+                    error_class, error_code = ErrorClass.SERVICE, "empty_visible_output"
+                elif reason == "unexpected_tool_call":
+                    error_class, error_code = ErrorClass.SERVICE, "unexpected_tool_call"
+                elif reason == "prompt_deviation":
+                    error_class, error_code = ErrorClass.MEASUREMENT, "prompt_deviation"
+                else:
+                    error_class, error_code = classify_error(exc)
             elif isinstance(exc, TimeoutError):
                 error_class = ErrorClass.SERVICE
                 error_code = "stream_stall" if output_seen else "response_start_timeout"
@@ -637,6 +717,19 @@ class ProbeRunner:
                 error_class, error_code = ErrorClass.SERVICE, "protocol_invalid"
             else:
                 error_class, error_code = classify_error(exc)
+
+        # Prompt token deviation check
+        if (
+            outcome == ProbeOutcome.SUCCESS
+            and ref_prompt_tokens > 0
+            and prompt_tokens is not None
+        ):
+            deviation = abs(prompt_tokens - ref_prompt_tokens) / ref_prompt_tokens
+            if deviation > 0.15:
+                outcome = ProbeOutcome.FAILED
+                error_class = ErrorClass.MEASUREMENT
+                error_code = "prompt_deviation"
+
         gaps = [current - previous for previous, current in pairwise(event_times)]
         output_speed: float | None = None
         if (
@@ -654,19 +747,39 @@ class ProbeRunner:
                 if completion_tokens is None
                 else "insufficient_token_events"
             )
+
+        # Settle budget with actual usage
+        if kind == ProbeKind.EXPERIENCE and ref_prompt_tokens > 0:
+            await self._settle_budget(
+                deployment,
+                ref_prompt_tokens,
+                max_tokens,
+                prompt_tokens,
+                completion_tokens,
+            )
+
+        # first_token_seconds = stream_start_seconds (reasoning-inclusive)
+        first_token_secs = (
+            first_event - request_clock if first_event is not None else None
+        )
+        total_response_secs = (
+            last_event - request_clock if last_event is not None else None
+        )
+
         measurements: dict[str, float | int | str | None] = {
             "reported_completion_tokens": completion_tokens,
             "reported_prompt_tokens": prompt_tokens,
+            "ref_prompt_tokens": ref_prompt_tokens or None,
             "configured_output_tokens": max_tokens,
             "time_to_headers_seconds": (
                 headers_clock - request_clock if headers_clock is not None else None
             ),
-            "stream_start_seconds": (
-                first_event - request_clock if first_event is not None else None
-            ),
+            "first_token_seconds": first_token_secs,
+            "stream_start_seconds": first_token_secs,
             "first_response_seconds": (
                 first_visible - request_clock if first_visible is not None else None
             ),
+            "total_response_seconds": total_response_secs,
             "output_speed_tps": output_speed,
             "stream_gap_p50_seconds": statistics.median(gaps) if gaps else None,
             "stream_gap_p95_seconds": (
@@ -674,6 +787,7 @@ class ProbeRunner:
             ),
             "stream_gap_max_seconds": max(gaps) if gaps else None,
             "reasoning_chars": reasoning_chars if reasoning_chars else None,
+            "reported_reasoning_tokens": reported_reasoning_tokens,
             "reasoning_tokens_estimated": (
                 (reasoning_chars + 3) // 4 if reasoning_chars else None
             ),
@@ -698,6 +812,7 @@ class ProbeRunner:
             block_id=block_id,
             scheduler_lag_seconds=scheduler_lag,
             confirmation_of=confirmation_of,
+            context_tier=context_tier,
             measurements=measurements,
         )
         await self.persist(result)
@@ -711,8 +826,8 @@ class ProbeRunner:
                 outcome, error_class, error_code, profile_id,
                 definition_version, suite_version, vantage_id,
                 collection_mode, fixture_id, block_id, scheduler_lag_seconds,
-                confirmation_of, measurement_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                confirmation_of, context_tier, measurement_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 result.deployment_id,
@@ -732,6 +847,7 @@ class ProbeRunner:
                 result.block_id,
                 result.scheduler_lag_seconds,
                 result.confirmation_of,
+                result.context_tier,
                 json.dumps(result.measurements, sort_keys=True),
             ),
         )
@@ -739,14 +855,18 @@ class ProbeRunner:
             "route_latency_seconds": "s",
             "reported_completion_tokens": "tokens",
             "reported_prompt_tokens": "tokens",
+            "ref_prompt_tokens": "tokens",
             "configured_output_tokens": "tokens",
             "time_to_headers_seconds": "s",
+            "first_token_seconds": "s",
             "stream_start_seconds": "s",
             "first_response_seconds": "s",
+            "total_response_seconds": "s",
             "stream_gap_p50_seconds": "s",
             "stream_gap_p95_seconds": "s",
             "stream_gap_max_seconds": "s",
             "reasoning_chars": "chars",
+            "reported_reasoning_tokens": "tokens",
             "reasoning_tokens_estimated": "tokens",
         }
         for metric, value in result.measurements.items():
@@ -770,7 +890,13 @@ class ProbeRunner:
 
 
 class ProbeScheduler:
-    """Persisted block scheduling with per-deployment inference locks."""
+    """Persisted block scheduling with per-deployment inference locks.
+
+    Six fixed fixtures in strict order across blocks:
+      block 0: agent-1k-a, block 1: agent-16k-a, block 2: agent-64k-a,
+      block 3: agent-1k-b, block 4: agent-16k-b, block 5: agent-64k-b,
+      then repeat.
+    """
 
     def __init__(self, runner: ProbeRunner, database: Database) -> None:
         self.runner = runner
@@ -818,8 +944,7 @@ class ProbeScheduler:
 
     async def run_block(
         self,
-        kind: ProbeKind,
-        fixture_index: int,
+        fixture_id: str,
         block_index: int,
         scheduled_at: datetime,
         stop: asyncio.Event | None = None,
@@ -829,7 +954,7 @@ class ProbeScheduler:
             return
         epoch = await self.database.current_epoch()
         nonce = block_nonce(epoch, block_index)
-        fixture_id, prompt = fixture_prompt(kind, fixture_index, nonce)
+        fid, payload = fixture_prompt(fixture_id, nonce)
         profile_id = self.runner.experience.response_profile_id
         block_id = f"{epoch}:{self.runner.collection_mode}:{profile_id}:{block_index}"
         started = datetime.now(UTC)
@@ -845,7 +970,7 @@ class ProbeScheduler:
             (
                 block_id,
                 profile_id,
-                fixture_id,
+                fid,
                 self.runner.collection_mode,
                 isoformat(scheduled_at),
                 isoformat(started),
@@ -862,9 +987,9 @@ class ProbeScheduler:
                     tasks.create_task(
                         self.runner.generation(
                             deployment,
-                            kind,
-                            fixture_id=fixture_id,
-                            prompt=prompt,
+                            ProbeKind.EXPERIENCE,
+                            fixture_id=fid,
+                            prompt_data=payload,
                             block_id=block_id,
                             scheduled_at=scheduled_at,
                         )
@@ -894,14 +1019,18 @@ class ProbeScheduler:
                 with suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=delay)
                 continue
-            kind = (
-                ProbeKind.EXPERIENCE_SHORT
-                if block_index % 2 == 0
-                else ProbeKind.EXPERIENCE_CONTEXT
-            )
-            fixture_index = (block_index // 2) % 3
-            actual_start = datetime.now(UTC)
-            await self.run_block(kind, fixture_index, block_index, next_at, stop)
+            if self.runner.collection_mode == "rapid":
+                rapid_tier = self.runner.settings.rapid_context_tier
+                if rapid_tier is None:
+                    raise RuntimeError("rapid mode requires a configured context tier")
+                fixture_order = [
+                    f"agent-{rapid_tier}-a",
+                    f"agent-{rapid_tier}-b",
+                ]
+            else:
+                fixture_order = _FIXTURE_ORDER
+            fixture_id = fixture_order[block_index % len(fixture_order)]
+            await self.run_block(fixture_id, block_index, next_at, stop)
             state["block_index"] = block_index + 1
             interval = (
                 self.runner.settings.rapid_block_interval_seconds
@@ -909,10 +1038,7 @@ class ProbeScheduler:
                 else self.runner.settings.standard_block_interval_seconds
             )
             state["next_block_at"] = isoformat(
-                max(
-                    next_at + timedelta(seconds=interval),
-                    actual_start + timedelta(seconds=interval),
-                )
+                datetime.now(UTC) + timedelta(seconds=interval)
             )
             await self._save_schedule(state)
 

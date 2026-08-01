@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from maas_observatory.api import RuntimeHealth, create_app
+from maas_observatory.api import ALL_TIERS, RuntimeHealth, create_app
 from maas_observatory.database import isoformat
 from maas_observatory.models import ResponseState
 from maas_observatory.state import StateEngine
@@ -17,6 +17,8 @@ from tests.observatory.helpers import (
     make_settings,
     open_database,
 )
+
+ALL_TIERS_LIST = list(ALL_TIERS)
 
 
 def test_response_state_transitions_and_measurement_errors(tmp_path: Path) -> None:
@@ -56,7 +58,6 @@ def test_response_state_transitions_and_measurement_errors(tmp_path: Path) -> No
             state, _, _, _ = await engine.evaluate(deployment_id)
             assert state == ResponseState.CURRENT
 
-            # Generation failures no longer flip the pill: a fresh route keeps CURRENT.
             await insert_probe(
                 database,
                 deployment_id,
@@ -77,7 +78,6 @@ def test_response_state_transitions_and_measurement_errors(tmp_path: Path) -> No
             state, _, _, _ = await engine.evaluate(deployment_id)
             assert state == ResponseState.CURRENT
 
-            # A failed route liveness check marks UNAVAILABLE.
             await insert_probe(
                 database,
                 deployment_id,
@@ -148,34 +148,39 @@ def _seed_api_database(tmp_path: Path) -> tuple[object, object, object, object]:
             """,
             (deployment_id, isoformat()),
         )
-        fixtures = (
-            ("experience_short", "response-01"),
-            ("experience_context", "response-04"),
-            ("experience_short", "response-02"),
-            ("experience_context", "response-05"),
-            ("experience_short", "response-03"),
-            ("experience_context", "response-06"),
-        )
-        for index, (kind, fixture) in enumerate(fixtures):
-            await insert_probe(
-                database,
-                deployment_id,
-                kind=kind,
-                fixture_id=fixture,
-                measurement={
-                    "first_response_seconds": 0.4 + index / 10,
-                    "output_speed_tps": 12.0 + index,
-                    "reported_prompt_tokens": 32,
-                    "reported_completion_tokens": 8,
-                },
-            )
+        # Seed 2 probes per tier (A+B) so all tiers are complete
+        base = datetime.now(UTC) - timedelta(hours=2)
+        for idx, tier in enumerate(ALL_TIERS_LIST):
+            for v_idx, variant in enumerate(("a", "b")):
+                fid = f"agent-{tier}-{variant}"
+                await insert_probe(
+                    database,
+                    deployment_id,
+                    kind="experience",
+                    fixture_id=fid,
+                    context_tier=tier,
+                    finished_at=isoformat(base + timedelta(minutes=idx * 10 + v_idx)),
+                    measurement={
+                        "first_response_seconds": 0.4 + (idx * 2 + v_idx) / 10,
+                        "first_token_seconds": 0.3 + (idx * 2 + v_idx) / 10,
+                        "total_response_seconds": 2.1 + idx + v_idx,
+                        "output_speed_tps": 12.0 + idx * 3 + v_idx,
+                        "reported_prompt_tokens": 1300 + idx * 5000,
+                        "ref_prompt_tokens": 1300 + idx * 5000,
+                        "reported_completion_tokens": 8,
+                        "reported_reasoning_tokens": 120 + idx * 20 + v_idx,
+                        "reasoning_tokens_estimated": 999,
+                    },
+                )
         await close_database(database, writer)
         return settings, catalog, database, writer
 
     return asyncio.run(scenario())
 
 
-def test_api_schema_v4_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> None:
+def test_api_v6_schema_tier_structure_etag_and_endpoints(
+    tmp_path: Path,
+) -> None:
     settings, catalog, database, _ = _seed_api_database(tmp_path)
     health = RuntimeHealth()
     health.ready = True
@@ -185,25 +190,55 @@ def test_api_schema_v4_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> N
     with TestClient(app) as client:
         assert client.get("/healthz").json() == {"status": "ok"}
         assert client.get("/readyz").status_code == 200
+
+        # -- overview --
         response = client.get("/api/v1/experience/overview")
         assert response.status_code == 200
-        assert response.json()["schema_version"] == "5"
+        body = response.json()
+        assert body["schema_version"] == "6"
+        assert body["freshness_seconds"] is not None
         item = next(
-            row
-            for row in response.json()["data"]
-            if row["deployment_id"] == deployment_id
+            row for row in body["data"] if row["deployment_id"] == deployment_id
         )
-        assert item["sample_count"] == 6
-        assert item["fixture_count"] == 6
-        assert item["complete_fixture_set"] is True
-        assert item["first_response_p50"] == 0.65
-        assert item["first_response_p95"] is None  # n=6 < 10
-        assert item["output_speed_p50"] == 14.5
-        assert item["output_speed_p95"] is None  # n=6 < 10
+        # Deployment-level fields
+        assert item["alias"] is not None
+        assert item["name"] is not None
+        assert item["profile_id"] == "response-v5"
+        assert item["definition_version"] == "5"
+        assert item["suite_version"] == "response-suite-v5"
+        assert item["collection_mode"] == "rapid"
         assert item["uptime_24h"] is None  # no route probes seeded
         assert item["uptime_7d"] is None
-        assert item["latest"] is not None
+        assert item["uptime_30d"] is None
+        assert item["path_success_rate"] is not None
+
+        # Verify all three tiers exist
+        tiers = item["tiers"]
+        assert set(tiers.keys()) == set(ALL_TIERS_LIST)
+        for tier in ALL_TIERS_LIST:
+            t = tiers[tier]
+            assert t["sample_count"] == 2
+            assert t["fixture_count"] == 2
+            assert t["complete_fixture_set"] is True
+            assert "first_token_p50" in t
+            assert "first_response_p50" in t
+            assert "total_response_p50" in t
+            assert "output_speed_p50" in t
+            assert "reasoning_tokens_p50" in t
+            assert t["reasoning_tokens_quality"] == "reported"
+            assert t["reasoning_tokens_p50"] != 999
+            assert "reported_prompt_tokens_p50" in t
+            assert t["latest"] is not None
+            assert t["latest_attempt_outcome"] == "success"
+            # p95 should be None since n=2 < 10
+            assert t["first_token_p95"] is None
+            assert t["first_response_p95"] is None
+            assert t["total_response_p95"] is None
+            assert t["output_speed_p95"] is None
+
+        # ETag and conditional request
         etag = response.headers["etag"]
+        assert response.headers["cache-control"] == "no-store"
         assert (
             client.get(
                 "/api/v1/experience/overview",
@@ -211,28 +246,73 @@ def test_api_schema_v4_fixture_gate_etag_and_removed_routes(tmp_path: Path) -> N
             ).status_code
             == 304
         )
-        comparison = client.get("/api/v1/compare").json()["data"]
+        catalog_response = client.get(
+            "/api/v1/catalog",
+            headers={"If-None-Match": etag},
+        )
+        assert catalog_response.status_code == 200
+        assert catalog_response.headers["etag"] != etag
+
+        # -- compare --
+        compare_data = client.get("/api/v1/compare").json()
+        assert compare_data["schema_version"] == "6"
         measured = next(
-            row for row in comparison if row["deployment_id"] == deployment_id
+            row for row in compare_data["data"] if row["deployment_id"] == deployment_id
         )
-        assert measured["value"] == 14.5
-        assert measured["suite_version"] == "response-suite-v4"
-        assert (
-            client.get(
-                f"/api/v1/deployments/{deployment_id}/experience/series"
-            ).status_code
-            == 200
+        assert "tiers" in measured
+        for tier in ALL_TIERS_LIST:
+            t = measured["tiers"][tier]
+            assert "first_token_p50" in t
+            assert "output_speed_p50" in t
+            assert "total_response_p50" in t
+            assert "sample_count" in t
+            assert "fixture_count" in t
+            assert "complete_fixture_set" in t
+            # 1k tier: two probes, complete fixture set
+            assert t["fixture_count"] == 2
+            assert t["complete_fixture_set"] is True
+        assert measured["suite_version"] == "response-suite-v5"
+
+        # -- experience/series --
+        series_resp = client.get(
+            f"/api/v1/deployments/{deployment_id}/experience/series"
         )
+        assert series_resp.status_code == 200
+        series_data = series_resp.json()["data"]
+        assert series_data["deployment_id"] == deployment_id
+        assert set(series_data["tiers"].keys()) == set(ALL_TIERS_LIST)
+        for tier in ALL_TIERS_LIST:
+            tier_pts = series_data["tiers"][tier]["points"]
+            assert len(tier_pts) == 2
+
+        # -- experience/latest --
+        latest_resp = client.get(
+            f"/api/v1/deployments/{deployment_id}/experience/latest"
+        )
+        assert latest_resp.status_code == 200
+        latest_data = latest_resp.json()["data"]
+        assert latest_data["deployment_id"] == deployment_id
+        assert set(latest_data["tiers"].keys()) == set(ALL_TIERS_LIST)
+        for tier in ALL_TIERS_LIST:
+            assert latest_data["tiers"][tier]["sample_count"] == 2
+
+        # -- experience/profiles --
         assert client.get("/api/v1/experience/profiles").status_code == 200
+
+        # -- catalog --
         assert client.get("/api/v1/catalog").status_code == 200
+
+        # -- events --
         assert client.get("/api/v1/events").status_code == 200
+
+        # -- removed routes --
         assert client.get("/api/v1/overview").status_code == 404
         assert (
             client.get(f"/api/v1/deployments/{deployment_id}/series").status_code == 404
         )
 
 
-def test_api_latest_sample_before_summary_and_meta_is_secret_safe(
+def test_api_latest_empty_db_returns_warmup_tiers(
     tmp_path: Path,
 ) -> None:
     async def seed() -> tuple[object, object, object]:
@@ -240,7 +320,14 @@ def test_api_latest_sample_before_summary_and_meta_is_secret_safe(
         catalog = configured_catalog()
         database, writer = await open_database(settings, catalog)
         deployment_id = catalog.deployments[0].deployment_id
-        await insert_probe(database, deployment_id)
+        # Seed one probe in 1k tier only
+        await insert_probe(
+            database,
+            deployment_id,
+            kind="experience",
+            context_tier="1k",
+            fixture_id="agent-1k-a",
+        )
         await close_database(database, writer)
         return settings, catalog, database
 
@@ -253,17 +340,85 @@ def test_api_latest_sample_before_summary_and_meta_is_secret_safe(
         data = client.get(
             f"/api/v1/deployments/{deployment_id}/experience/latest"
         ).json()["data"]
-        assert data["sample_count"] == 1
-        assert data["latest"]["first_response_seconds"] == 0.5
-        assert data["first_response_p50"] == 0.5
-        assert data["first_response_p95"] is None  # n=1 < 10
-        assert data["latest_attempt_outcome"] == "success"
-        meta_text = client.get("/api/v1/meta").text.lower()
-        assert "response-suite-v4" in meta_text
-        assert "aggregate_output" not in meta_text
-        assert "/metrics" not in meta_text
+        # All three tiers present even when no data
+        assert set(data["tiers"].keys()) == set(ALL_TIERS_LIST)
+        # 1k tier has data
+        assert data["tiers"]["1k"]["sample_count"] == 1
+        assert data["tiers"]["1k"]["latest"] is not None
+        assert data["tiers"]["1k"]["first_response_p50"] == 0.5
+        assert data["tiers"]["1k"]["first_response_p95"] is None
+        assert data["tiers"]["1k"]["latest_attempt_outcome"] == "success"
+        # 16k/64k have no data — warm-up structure
+        for tier in ("16k", "64k"):
+            t = data["tiers"][tier]
+            assert t["sample_count"] == 0
+            assert t["fixture_count"] == 0
+            assert t["complete_fixture_set"] is False
+            assert t["latest"] is None
+            assert t["latest_attempt_reason"] == "first_check_scheduled"
+
+
+def test_meta_is_v6_and_secret_safe(tmp_path: Path) -> None:
+    async def seed() -> tuple[object, object, object]:
+        settings = make_settings(tmp_path)
+        catalog = configured_catalog()
+        database, writer = await open_database(settings, catalog)
+        deployment_id = catalog.deployments[0].deployment_id
+        await insert_probe(
+            database,
+            deployment_id,
+            kind="experience",
+            context_tier="1k",
+            fixture_id="agent-1k-a",
+        )
+        await close_database(database, writer)
+        return settings, catalog, database
+
+    settings, catalog, database = asyncio.run(seed())
+    app = create_app(
+        database, catalog, settings, RuntimeHealth(), frontend_dir=tmp_path
+    )
+    with TestClient(app) as client:
+        meta = client.get("/api/v1/meta").json()
+        assert meta["schema_version"] == "6"
+        assert meta["data"]["api_schema_version"] == "6"
+        assert meta["data"]["config_schema_version"] == 4
+        assert meta["data"]["database_schema_version"] == 4
+        assert meta["data"]["suite_version"] == "response-suite-v5"
+        assert meta["data"]["definition_version"] == "5"
+        assert meta["data"]["context_tiers"] == [
+            {"tier": "1k", "target_tokens": 1000, "fixture_count": 2},
+            {"tier": "16k", "target_tokens": 16000, "fixture_count": 2},
+            {"tier": "64k", "target_tokens": 64000, "fixture_count": 2},
+        ]
+        assert "fixture_order" not in meta["data"]
+        assert meta["data"]["schedule"]["standard_rotation"] == [
+            "1K-A",
+            "16K-A",
+            "64K-A",
+            "1K-B",
+            "16K-B",
+            "64K-B",
+        ]
+        assert meta["data"]["schedule"]["rapid_context_tier"] == "1k"
+        assert "rapid_automatic_limit" not in meta["data"]["schedule"]
+        assert meta["data"]["budget"] == {
+            "scope": "per deployment per UTC day",
+            "applies_to": ["rapid", "standard"],
+            "requests": 3,
+            "input_tokens": 100_000,
+            "output_tokens": 24,
+        }
+        # Secret safety
+        import json
+
+        meta_text = json.dumps(meta)
         assert "test-secret" not in meta_text
         assert "models.test" not in meta_text
+        assert "agent-1k-a" not in meta_text
+        assert "sha256" not in meta_text
+        assert "tokenizer" not in meta_text
+
         assert (
             client.get("/api/v1/experience/overview?profile=unknown").status_code == 400
         )
@@ -273,7 +428,54 @@ def test_api_latest_sample_before_summary_and_meta_is_secret_safe(
         )
 
 
-def test_generation_failure_keeps_pill_current_but_reports_attempt(
+def test_measurement_limit_does_not_reduce_path_success(tmp_path: Path) -> None:
+    async def seed() -> tuple[object, object, object]:
+        settings = make_settings(tmp_path)
+        catalog = configured_catalog()
+        database, writer = await open_database(settings, catalog)
+        deployment_id = catalog.deployments[0].deployment_id
+        await insert_probe(
+            database,
+            deployment_id,
+            kind="experience",
+            context_tier="1k",
+            fixture_id="agent-1k-a",
+            outcome="success",
+        )
+        await insert_probe(
+            database,
+            deployment_id,
+            kind="experience",
+            context_tier="1k",
+            fixture_id="agent-1k-b",
+            outcome="failed",
+            error_class="measurement_error",
+            error_code="prompt_deviation",
+        )
+        await close_database(database, writer)
+        return settings, catalog, database
+
+    settings, catalog, database = asyncio.run(seed())
+    app = create_app(
+        database, catalog, settings, RuntimeHealth(), frontend_dir=tmp_path
+    )
+    deployment_id = catalog.deployments[0].deployment_id
+    with TestClient(app) as client:
+        item = next(
+            row
+            for row in client.get("/api/v1/experience/overview").json()["data"]
+            if row["deployment_id"] == deployment_id
+        )
+        assert item["path_success_rate"] == 1.0
+        assert item["tiers"]["1k"]["sample_count"] == 1
+        assert item["tiers"]["1k"]["latest_attempt_reason"] == ("measurement_limited")
+        series = client.get(
+            f"/api/v1/deployments/{deployment_id}/experience/series"
+        ).json()["data"]
+        assert series["tiers"]["1k"]["points"][-1]["reason"] == ("measurement_limited")
+
+
+def test_generation_failure_visible_in_tier_latest_attempt(
     tmp_path: Path,
 ) -> None:
     async def seed() -> tuple[object, object, object]:
@@ -299,6 +501,9 @@ def test_generation_failure_keeps_pill_current_but_reports_attempt(
         await insert_probe(
             database,
             deployment_id,
+            kind="experience",
+            context_tier="1k",
+            fixture_id="agent-1k-a",
             outcome="failed",
             error_class="service_error",
             error_code="http_503",
@@ -317,8 +522,16 @@ def test_generation_failure_keeps_pill_current_but_reports_attempt(
             for row in client.get("/api/v1/experience/overview").json()["data"]
             if row["deployment_id"] == deployment_id
         )
-        # R1: a failed generation attempt must not flip the availability pill.
-        assert item["response_state"] == "current"
-        assert item["latest_attempt_outcome"] == "failed"
-        assert item["latest_attempt_error_code"] == "http_503"
-        assert item["latest_attempt_reason"] == "request_failed"
+        # deployment-level: route state is current
+        # 1k tier: one failed attempt visible
+        t1k = item["tiers"]["1k"]
+        assert t1k["sample_count"] == 0
+        assert t1k["latest_attempt_outcome"] == "failed"
+        assert t1k["latest_attempt_error_code"] == "http_503"
+        assert t1k["latest_attempt_reason"] == "request_failed"
+        assert t1k["latest"] is None
+        # 16k/64k have no attempts
+        for tier in ("16k", "64k"):
+            assert item["tiers"][tier]["latest_attempt_reason"] == (
+                "first_check_scheduled"
+            )

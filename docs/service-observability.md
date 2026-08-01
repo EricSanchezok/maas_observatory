@@ -382,13 +382,13 @@ probe_output_token_share =
 重复使用完全相同的 prompt 可能命中 prefix cache，使 TTFT 偏向 warm-cache 条件。
 随机变化 prompt 又会改变 tokenization 和 cache 行为。
 
-建议定义两个 profile：
+建议定义按 context tier 分层的确定性 fixture：
 
-- `warm-short`：固定 system/prompt prefix，测量稳定 canary 和共享前缀条件；
-- `cold-short`：在 prompt 起始位置加入固定长度、记录在案的 nonce，降低 prefix
-  reuse，低频运行。
+- 固定 system/prompt 前缀 + 记录在案的 nonce，在多个已知的 input token 档位
+  上同时测量；
+- 低频运行以降低 prefix reuse 影响。
 
-两类结果分别展示，不合并平均。每个观测记录：
+不同 tier 结果分别展示，不合并平均。每个观测记录：
 
 - input token 数；
 - cache profile；

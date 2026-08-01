@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAvailability, fetchExperienceSeries, fetchOverview } from "../api";
 import type {
   AvailabilityItem,
@@ -6,8 +6,8 @@ import type {
   CompareItem,
   Envelope,
   ExperienceItem,
-  MetricSeries,
   ObservatoryEvent,
+  TieredSeries,
   WindowOption
 } from "../types";
 
@@ -19,16 +19,14 @@ export interface DashboardData {
   availability: Envelope<AvailabilityItem[]>;
 }
 
-const EMPTY_SERIES: MetricSeries = {};
-
 export function useExperienceSeries(
   deploymentId: string,
   dataWindow: WindowOption,
   reloadToken: number
 ) {
-  const [responseSeries, setResponseSeries] =
-    useState<MetricSeries>(EMPTY_SERIES);
+  const [tieredSeries, setTieredSeries] = useState<TieredSeries | null>(null);
   const [loading, setLoading] = useState(false);
+  const seriesForId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!deploymentId) return;
@@ -42,13 +40,14 @@ export function useExperienceSeries(
           dataWindow,
           controller.signal
         );
-        if (alive) {
-          setResponseSeries(result);
-        }
+        if (!alive) return;
+        setTieredSeries((prev) =>
+          result.deployment_id === deploymentId ? result : prev
+        );
+        seriesForId.current = result.deployment_id;
       } catch {
-        if (alive && !controller.signal.aborted) {
-          setResponseSeries(EMPTY_SERIES);
-        }
+        if (!alive || controller.signal.aborted) return;
+        // Preserve prior data; never clear to null on transient failure
       } finally {
         if (alive) setLoading(false);
       }
@@ -60,7 +59,7 @@ export function useExperienceSeries(
     };
   }, [dataWindow, deploymentId, reloadToken]);
 
-  return { responseSeries, loading };
+  return { tieredSeries, loading };
 }
 
 function availabilityDays(dataWindow: WindowOption): 7 | 30 {
@@ -89,6 +88,7 @@ export function useObservatoryData(dataWindow: WindowOption) {
       } catch (loadError) {
         if (!alive || controller.signal.aborted) return;
         setError(loadError instanceof Error ? loadError.message : "Request failed");
+        // Preserve prior data on transient failure
       } finally {
         if (alive) setLoading(false);
       }

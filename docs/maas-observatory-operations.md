@@ -30,9 +30,10 @@ Use `rapid` only for an attended collection session:
 MAAS_OBSERVATORY_COLLECTION_MODE=rapid
 ```
 
-Rapid collection has no automatic request cap. Switch it back to Standard
-manually after the session. The active mode appears in the startup log, API
-metadata, and interface.
+Rapid mode requires an explicit context tier via
+`MAAS_OBSERVATORY_RAPID_CONTEXT_TIER` and shares the same per-deployment daily
+budget as Standard. Switch it back to Standard manually after the session. The
+active mode appears in the startup log, API metadata, and interface.
 
 The service listens on `0.0.0.0:8080`. `/healthz` reports that the HTTP process
 is alive. `/readyz` returns 200 only after migration, SQLite `quick_check`,
@@ -60,8 +61,12 @@ MAAS_OBSERVATORY_CORS_ORIGINS=https://status.example.edu
 `/v1/models` is checked every 60 seconds without inference. Response timing is
 measured with versioned streaming requests from one declared observer vantage:
 
-- **First response**: request start to the first non-empty visible content.
-  Hidden reasoning and metadata frames do not stop the timer.
+- **First token**: request start to the first output event of any kind
+  (reasoning-inclusive). This reflects the earliest response signal from the
+  deployment.
+- **First answer**: request start to the first non-empty visible content.
+  Hidden reasoning and metadata frames do not stop this timer.
+- **Total response**: request start to the last output event.
 - **Output speed**: `(reported completion tokens - 1) / (last output event -
   first output event)`.
 
@@ -69,21 +74,19 @@ If streaming usage is absent, Output speed is unavailable. A successfully
 completed response still counts as a successful path check. Characters and SSE
 chunks are never used as token estimates.
 
-`response-suite-v4` contains three compact fixtures and three deterministic
-16 KiB fixtures in one balanced response profile. The repository stores their
-definitions and SHA-256 digests, but the
-database, logs, API, and exports do not retain prompt or response content. A
-sampling block uses the same fixture and nonce for all nine deployments. The
-deployment order rotates and reverses deterministically to avoid a fixed
-first/last position.
+`response-suite-v5` contains six deterministic Agent fixtures at three context
+tiers (1K, 16K, 64K) with two variants each, in one balanced response profile.
+The repository stores fixture definitions and payload digests, but the database,
+logs, API, and exports do not retain prompt or response content. A sampling
+block uses the same fixture and nonce for all nine deployments. The deployment
+order rotates and reverses deterministically to avoid a fixed first/last
+position.
 
-Both compact and extended fixtures allow up to 1,024 completion tokens. This
-ceiling prevents reasoning-capable deployments from consuming the entire
-response budget before producing visible text and gives steady-state speed
-measurements enough output events to reduce short-stream variance. Responses
-may stop naturally before the ceiling. Changing this limit requires a new
-suite and definition version so results collected under different request
-shapes are never combined.
+All six fixtures allow up to 16,384 completion tokens. This ceiling gives
+steady-state speed measurements enough output events to reduce short-stream
+variance across all tiers. Responses may stop naturally before the ceiling.
+Changing this limit requires a new suite and definition version so results
+collected under different request shapes are never combined.
 
 Observer HTTP clients explicitly ignore workstation proxy environment and
 system settings. Requests follow the host routing table directly, which keeps
@@ -110,8 +113,8 @@ active inference request.
 
 | Mode | Schedule | Limit |
 |---|---|---|
-| `rapid` | one request per model per minute; compact and extended fixtures alternate | no automatic cap |
-| `standard` | one balanced block every 6 minutes | daily request and output-token limits |
+| `rapid` | one request per model per minute; single-tier A/B variants alternate | daily request, input-token, and output-token limits |
+| `standard` | one balanced six-fixture block every 10 minutes; strict equal-frequency order across all three tiers | daily request, input-token, and output-token limits |
 
 Nine calls are spread across each block. If a request or block runs long, the
 next block is delayed. The scheduler records lag and does not launch concurrent
@@ -145,10 +148,13 @@ SQLite uses WAL, foreign keys, a five-second busy timeout,
 `synchronous=NORMAL`, incremental auto-vacuum, and one asynchronous writer.
 Run one Uvicorn worker and one application replica per database.
 
-Schema v3 retains response probes, profile definitions, scheduler position,
-events, budgets, and valid response history. When migrating schema v2, the
-service creates an online backup before dropping all scrape, counter,
-histogram, rollup, metrics-source, and telemetry-state data.
+Schema v4 retains response probes with context-tier awareness, profile
+definitions, scheduler position, events, per-deployment daily budget ledgers,
+and valid response history. When migrating from schema v3, the service creates
+an online backup before adding the context-tier column and replacing the budget
+table. Schema v2 first creates a backup then drops all scrape, counter,
+histogram, rollup, metrics-source, and telemetry-state data. Schema v1 requires
+a full reset.
 
 Useful commands:
 
@@ -166,11 +172,11 @@ uv run maas-observatory inventory --no-generation
 uv run maas-observatory inventory --generation
 uv run maas-observatory probe run \
   --model glm-5.2 \
-  --kind experience_short
+  --kind experience
 
 # Destructive rebuild: stop the service and back up first
 uv run maas-observatory db backup
-uv run maas-observatory db reset --confirm response-probes-v3
+uv run maas-observatory db reset --confirm response-suite-v5
 uv run maas-observatory db check
 ```
 
@@ -195,7 +201,7 @@ GET|HEAD /api/v1/meta
 
 The removed passive endpoints `/api/v1/overview` and
 `/api/v1/deployments/{id}/series` return 404. API envelopes use schema version
-4, ETags, and:
+6, ETags, and:
 
 ```text
 Cache-Control: public, max-age=10, stale-while-revalidate=30

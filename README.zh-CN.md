@@ -27,9 +27,10 @@ uv run maas-observatory serve
 开发前端时可另行运行 `npm --prefix frontend run dev`，Vite 会把 API 请求代理到
 8080 端口。
 
-仓库默认使用 `standard` 采集。`rapid` 模式每分钟为每个模型安排一次请求，短请求
-和长上下文交替执行，并且没有自动请求上限，只适合有人值守的采集阶段；使用后必须
-手动切回 Standard。准确的调度、指标公式、schema v3 迁移和 API 说明见
+仓库默认使用 `standard` 采集。`rapid` 模式需要设置
+`MAAS_OBSERVATORY_RAPID_CONTEXT_TIER`（可选 `1k`、`16k` 或 `64k`），
+并与 Standard 共享每部署每日预算上限，只适合有人值守的采集阶段；使用后必须
+手动切回 Standard。准确的调度、指标公式、schema v4 迁移和 API v6 说明见
 [运行与维护](docs/maas-observatory-operations.md)。
 
 ## 快速开始

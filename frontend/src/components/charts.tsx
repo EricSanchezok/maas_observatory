@@ -13,7 +13,6 @@ import { useMemo } from "react";
 import {
   chartRows,
   coverage,
-  formatLatency,
   formatMetric,
   withSingleGapBridges
 } from "../lib/format";
@@ -68,6 +67,7 @@ export function MetricLineChart({
   window,
   color,
   unit,
+  domain,
   valueFormatter = formatMetric
 }: {
   title: string;
@@ -77,6 +77,7 @@ export function MetricLineChart({
   window: WindowOption;
   color: string;
   unit: string;
+  domain?: [number, number];
   valueFormatter?: (value: number | null | undefined) => string;
 }) {
   const rows = useMemo(
@@ -91,7 +92,7 @@ export function MetricLineChart({
     }
     return null;
   }, [metric, rows]);
-  const gradientId = `fill-${metric.replaceAll("_", "-")}`;
+  const gradientId = `fill-${metric.replaceAll("_", "-")}-${Math.random().toString(36).slice(2, 8)}`;
 
   return (
     <article className="chart-panel">
@@ -130,6 +131,7 @@ export function MetricLineChart({
                 tickLine={false}
                 axisLine={false}
                 width={54}
+                domain={domain ?? ["auto", "auto"]}
                 tick={{ fill: "#77828c", fontSize: 10 }}
                 tickFormatter={(value: number) => formatMetric(value, 0)}
               />
@@ -173,7 +175,11 @@ export function MetricLineChart({
   );
 }
 
-export const latencyFormatter = formatLatency;
+export const latencyFormatter = (value: number | null | undefined): string => {
+  if (value === null || value === undefined) return "—";
+  if (value < 1) return `${formatMetric(value * 1000, 0)} ms`;
+  return `${formatMetric(value, 2)} s`;
+};
 
 const UPTIME_MINT = "#9be7d8";
 const UPTIME_AMBER = "#e7b978";

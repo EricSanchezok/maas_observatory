@@ -28,11 +28,50 @@
     right: -80px;
   }
 
-  .experience-fleet-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Fleet matrix: keep model column, stack tiers vertically */
+  .fleet-matrix-header,
+  .fleet-matrix-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .experience-chart-grid {
+  .fleet-matrix-header [role="columnheader"]:not(:first-child) {
+    display: none;
+  }
+
+  .fleet-matrix-row:hover,
+  .fleet-matrix-row.is-hovered {
+    background: rgba(155, 231, 216, 0.02);
+  }
+
+  .fleet-matrix-row {
+    min-height: auto;
+  }
+
+  .fleet-matrix-model-col[role="rowheader"] {
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .fleet-matrix-tier-col[role="gridcell"] {
+    border-left: 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .fleet-matrix-tier-col[role="gridcell"]:last-child {
+    border-bottom: 0;
+  }
+
+  /* Tier columns: single column */
+  .tier-columns {
+    grid-template-columns: 1fr;
+  }
+
+  /* Tier metric grid: stack */
+  .tier-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Small multiples: stack charts */
+  .trend-row-charts {
     grid-template-columns: 1fr;
   }
 
@@ -54,14 +93,6 @@
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .metric-tile:nth-child(2) {
-    border-right: 0;
-  }
-
-  .metric-tile:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--line);
-  }
-
   .comparison-progress {
     grid-template-columns: 1fr;
   }
@@ -70,12 +101,8 @@
     grid-column: auto;
   }
 
-  .single-result {
+  .sampling-status {
     grid-template-columns: repeat(2, 1fr);
-  }
-
-  .single-result-pending {
-    grid-column: 1 / -1;
   }
 }
 
@@ -155,13 +182,28 @@
     font-size: 36px;
   }
 
-  .experience-fleet-grid,
-  .metric-grid-two {
-    grid-template-columns: 1fr;
+  .compare-controls {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
-  .experience-triad {
-    gap: 10px;
+  .fleet-tier-metrics {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+  }
+
+  .fleet-tier-footer {
+    flex-wrap: wrap;
+  }
+
+  .tier-column-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+
+  .tier-row-pos,
+  .tier-row-track {
+    display: none;
   }
 
   .detail-toolbar {
@@ -203,7 +245,12 @@
     display: none;
   }
 
-  .metric-grid {
+  .metric-grid,
+  .metric-grid-two {
+    grid-template-columns: 1fr;
+  }
+
+  .tier-metric-group-grid {
     grid-template-columns: 1fr;
   }
 
@@ -215,6 +262,10 @@
   .chart-body {
     height: 250px;
     padding-inline: 2px;
+  }
+
+  .trend-tier-chart .chart-body {
+    height: 160px;
   }
 
   .chart-coverage {
@@ -237,33 +288,6 @@
 
   .comparison-progress-meta time {
     margin-left: 0;
-  }
-
-  .single-result {
-    grid-template-columns: 1fr;
-    padding: 12px;
-  }
-
-  .single-result-pending,
-  .single-result .sampling-status {
-    grid-column: auto;
-  }
-
-  .ranked-row {
-    grid-template-columns: 28px 1fr auto;
-    gap: 9px;
-    min-height: 82px;
-    padding: 0 12px;
-  }
-
-  .ranked-track {
-    grid-column: 2 / -1;
-    grid-row: 2;
-    margin-top: -18px;
-  }
-
-  .ranked-value span {
-    max-width: 86px;
   }
 
   .event-row {

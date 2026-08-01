@@ -2,50 +2,53 @@ import {
   ArrowClockwise,
   WarningCircle
 } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
 import { BrandMark, WindowControl } from "./components/common";
 import { EventsSection } from "./components/EventsSection";
 import { FleetOverview } from "./components/FleetOverview";
 import { ModelDetail } from "./components/ModelDetail";
 import { SpeedComparison } from "./components/SpeedComparison";
+import { useObservatoryModel } from "./hooks/useObservatoryModel";
 import {
   useExperienceSeries,
   useObservatoryData
 } from "./hooks/useObservatoryData";
 import { formatAge } from "./lib/format";
 import type { WindowOption } from "./types";
+import { useState } from "react";
 
 function App() {
   const [dataWindow, setDataWindow] = useState<WindowOption>("1h");
-  const [selectedId, setSelectedId] = useState("");
   const { data, loading, error, refresh, reloadToken } =
     useObservatoryData(dataWindow);
   const models = data?.experience.data ?? [];
   const availability = data?.availability.data ?? [];
 
-  useEffect(() => {
-    if (models.length === 0) return;
-    if (!models.some((model) => model.deployment_id === selectedId)) {
-      setSelectedId(models[0].deployment_id);
-    }
-  }, [models, selectedId]);
-
-  const selected =
-    models.find((model) => model.deployment_id === selectedId) ?? models[0];
   const {
-    responseSeries,
-    loading: seriesLoading
-  } = useExperienceSeries(
+    selectedId,
+    selected,
+    hoveredId,
+    setSelectedId,
+    setHoveredId
+  } = useObservatoryModel(models);
+
+  const { tieredSeries, loading: seriesLoading } = useExperienceSeries(
     selected?.deployment_id ?? "",
     dataWindow,
     reloadToken
   );
-  const currentCount = models.filter(
-    (model) => model.response_state === "current"
+
+  const currentCount = models.filter((model) =>
+    Object.values(model.tiers).some(
+      (t) => t.response_state === "current" && t.complete_fixture_set
+    )
   ).length;
-  const checkedCount = models.filter(
-    (model) => model.latest_attempt_at !== null
+
+  const checkedCount = models.filter((model) =>
+    Object.values(model.tiers).some(
+      (t) => t.latest_attempt_at !== null
+    )
   ).length;
+
   const freshness = data?.experience.freshness_seconds ?? null;
 
   return (
@@ -118,6 +121,10 @@ function App() {
           models={models}
           dataWindow={dataWindow}
           availability={availability}
+          selectedId={selectedId}
+          hoveredId={hoveredId}
+          onSelect={setSelectedId}
+          onHover={setHoveredId}
         />
 
         {selected ? (
@@ -127,7 +134,7 @@ function App() {
             selectedId={selectedId}
             onSelectedIdChange={setSelectedId}
             dataWindow={dataWindow}
-            responseSeries={responseSeries}
+            tieredSeries={tieredSeries}
             loading={seriesLoading}
           />
         ) : (
@@ -137,7 +144,13 @@ function App() {
           </section>
         )}
 
-        <SpeedComparison items={data?.compare.data ?? []} />
+        <SpeedComparison
+          items={data?.compare.data ?? []}
+          selectedId={selectedId}
+          hoveredId={hoveredId}
+          onSelect={setSelectedId}
+          onHover={setHoveredId}
+        />
         <EventsSection events={data?.events.data ?? []} />
       </main>
 

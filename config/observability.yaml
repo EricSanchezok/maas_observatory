@@ -1,4 +1,4 @@
-schema_version: 3
+schema_version: 4
 collection_mode: standard
 
 server:
@@ -20,12 +20,13 @@ probes:
   response_start_timeout_seconds: 180
   stream_stall_seconds: 30
   canary_max_output_tokens: 8
-  short_max_output_tokens: 16384
-  context_max_output_tokens: 16384
+  experience_max_output_tokens: 16384
   rapid_block_interval_seconds: 60
+  rapid_context_tier: null
   standard_block_interval_seconds: 600
-  standard_budget:
-    response_requests: 240
+  daily_budget:
+    requests: 240
+    input_tokens: 5000000
     output_tokens: 3932160
 
 profiles:
@@ -41,8 +42,8 @@ profiles:
 
 experience:
   vantage_id: observatory-primary
-  suite_version: response-suite-v4
-  response_profile_id: response-v4
-  definition_version: "4"
+  suite_version: response-suite-v5
+  response_profile_id: response-v5
+  definition_version: "5"
   summary_min_samples: 6
   baseline_min_samples: 20

@@ -19,6 +19,8 @@ from tests.observatory.helpers import (
     storage_at,
 )
 
+ALL_TIERS = ("1k", "16k", "64k")
+
 
 def test_database_version_guards_missing_check_and_writer_recovery(
     tmp_path: Path,
@@ -26,7 +28,8 @@ def test_database_version_guards_missing_check_and_writer_recovery(
     async def scenario() -> None:
         missing = Database(storage_at(tmp_path / "missing"))
         assert await missing.quick_check() == (False, "database_missing")
-        for version in (1, 4):
+        # v1 is unsupported, v5 is newer than current (v4)
+        for version in (1, 5):
             database = Database(storage_at(tmp_path / str(version)))
             database.prepare_directories()
             connection = sqlite3.connect(database.path)
@@ -130,20 +133,26 @@ def test_regression_detection_deduplication_and_evaluate_all(
         engine = StateEngine(catalog, settings, database)
         try:
             base = datetime.now(UTC) - timedelta(minutes=30)
+            # Insert baseline probes with context_tier across all tiers
             for index in range(18):
                 await insert_probe(
                     database,
                     deployment_id,
+                    context_tier="1k",
+                    fixture_id="agent-1k-a",
                     finished_at=isoformat(base + timedelta(seconds=index)),
                     measurement={
                         "first_response_seconds": 1.0,
                         "output_speed_tps": 20.0,
                     },
                 )
+            # Insert regression probes in 1k tier
             for index in range(2):
                 await insert_probe(
                     database,
                     deployment_id,
+                    context_tier="1k",
+                    fixture_id="agent-1k-b",
                     finished_at=isoformat(datetime.now(UTC) + timedelta(seconds=index)),
                     measurement={
                         "first_response_seconds": 4.0,
@@ -151,21 +160,24 @@ def test_regression_detection_deduplication_and_evaluate_all(
                     },
                 )
             regressions = await engine._regression(deployment_id)
-            assert set(regressions) == {
-                "first_response_seconds_regression",
-                "output_speed_tps_regression",
+            expected = {
+                "1k:first_response_seconds_regression",
+                "1k:output_speed_tps_regression",
             }
+            assert set(regressions) == expected, f"got {regressions}"
+
             await engine._persist_regression(deployment_id, regressions)
+            # Deduplication: second persist should not create duplicate
             await engine._persist_regression(deployment_id, regressions)
-            assert (
-                await database.scalar(
-                    """
-                SELECT COUNT(*) FROM events
-                WHERE event_key='response:regression'
+            event_count = await database.scalar(
                 """
-                )
-                == 1
+                SELECT COUNT(*) FROM events
+                WHERE deployment_id=? AND kind='response_regression'
+                """,
+                (deployment_id,),
             )
+            assert event_count == 2  # one per unique reason
+
             await engine.evaluate_all()
             assert await database.scalar("SELECT COUNT(*) FROM current_states") == 9
             state_rows = await database.scalar("SELECT COUNT(*) FROM state_history")
@@ -174,6 +186,56 @@ def test_regression_detection_deduplication_and_evaluate_all(
                 await database.scalar("SELECT COUNT(*) FROM state_history")
                 == state_rows
             )
+        finally:
+            await close_database(database, writer)
+
+    asyncio.run(scenario())
+
+
+def test_legacy_experience_kinds_do_not_affect_v5_state(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        settings = make_settings(tmp_path)
+        catalog = configured_catalog()
+        database, writer = await open_database(settings, catalog)
+        deployment_id = catalog.deployments[0].deployment_id
+        engine = StateEngine(catalog, settings, database)
+        now = isoformat()
+        try:
+            await insert_probe(
+                database,
+                deployment_id,
+                kind="route",
+                profile_id="",
+                outcome="success",
+                finished_at=now,
+            )
+            for _index in range(settings.experience.baseline_min_samples):
+                await database.write(
+                    """
+                    INSERT INTO probe_runs(
+                        deployment_id, kind, scheduled_at, started_at, finished_at,
+                        outcome, error_class, profile_id, definition_version,
+                        suite_version, vantage_id, collection_mode, fixture_id,
+                        block_id, scheduler_lag_seconds, context_tier,
+                        measurement_json
+                    ) VALUES (?, 'experience_context', ?, ?, ?, 'success', 'none',
+                              'response-v5', '5', 'response-suite-v5',
+                              'test-vantage', 'rapid', 'agent-1k-a',
+                              'legacy-block', 0, '1k', ?)
+                    """,
+                    (
+                        deployment_id,
+                        now,
+                        now,
+                        now,
+                        '{"first_response_seconds":99,"output_speed_tps":1}',
+                    ),
+                )
+
+            state, _, _, last_response_at = await engine.evaluate(deployment_id)
+            assert state == ResponseState.CURRENT
+            assert last_response_at is None
+            assert await engine._regression(deployment_id) == []
         finally:
             await close_database(database, writer)
 

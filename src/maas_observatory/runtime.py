@@ -148,8 +148,8 @@ async def serve(
                 )
             health.ready = True
             health.detail = "ready"
-            LOGGER.warning(
-                "collection mode=%s; rapid mode has no automatic request cap",
+            LOGGER.info(
+                "collection mode=%s; daily request/input/output budgets enabled",
                 settings.collection_mode,
             )
             async with asyncio.TaskGroup() as tasks:

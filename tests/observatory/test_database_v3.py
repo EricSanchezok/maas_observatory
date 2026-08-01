@@ -25,18 +25,22 @@ def test_settings_environment_mode_and_validation(
     config = tmp_path / "observability.yaml"
     config.write_text(
         """
-schema_version: 3
+schema_version: 4
 collection_mode: standard
 profiles: {sample: default-only}
 """,
         encoding="utf-8",
     )
     monkeypatch.setenv("MAAS_OBSERVATORY_COLLECTION_MODE", "rapid")
+    with pytest.raises(ValueError, match="rapid mode requires"):
+        load_observability_settings(config)
+    monkeypatch.setenv("MAAS_OBSERVATORY_RAPID_CONTEXT_TIER", "1k")
     monkeypatch.setenv(
         "MAAS_OBSERVATORY_CORS_ORIGINS", "https://one.test, https://two.test"
     )
     settings = load_observability_settings(config)
     assert settings.collection_mode == "rapid"
+    assert settings.probes.rapid_context_tier == "1k"
     assert settings.server.cors_origins == [
         "https://one.test",
         "https://two.test",
@@ -49,7 +53,7 @@ profiles: {sample: default-only}
         load_observability_settings(tmp_path / "missing.yaml")
 
 
-def test_schema_v3_contains_only_active_response_tables(tmp_path: Path) -> None:
+def test_schema_v4_contains_only_active_response_tables(tmp_path: Path) -> None:
     async def scenario() -> None:
         settings = make_settings(tmp_path)
         catalog = configured_catalog()
@@ -69,12 +73,14 @@ def test_schema_v3_contains_only_active_response_tables(tmp_path: Path) -> None:
                 "current_states",
                 "collection_blocks",
                 "experience_profiles",
+                "budget_ledger",
             } <= names
             assert {
                 "scrape_snapshots",
                 "metric_accumulators",
                 "rollups",
                 "metrics_sources",
+                "budget_usage",
             }.isdisjoint(names)
             assert len(await database.query("SELECT * FROM deployments")) == 9
             await database.write(
@@ -84,7 +90,7 @@ def test_schema_v3_contains_only_active_response_tables(tmp_path: Path) -> None:
                     scheduled_at, started_at, order_json,
                     scheduler_lag_seconds, status
                 ) VALUES (
-                    'stale', 'response-v4', 'response-01', 'rapid',
+                    'stale', 'response-v5', 'agent-1k-a', 'rapid',
                     ?, ?, '[]', 0, 'running'
                 )
                 """,
@@ -118,6 +124,7 @@ def test_writer_retention_backup_and_reset(tmp_path: Path) -> None:
             old = isoformat(datetime.now(UTC) - timedelta(days=366))
             await insert_probe(database, deployment_id, finished_at=old)
             await insert_probe(database, deployment_id)
+            assert await database.scalar("SELECT COUNT(*) FROM probe_runs") == 2
             await database.apply_retention(now=datetime.now(UTC))
             assert await database.scalar("SELECT COUNT(*) FROM probe_runs") == 1
             backup = await database.backup(now=datetime(2026, 7, 29, 1, 2, tzinfo=UTC))
@@ -125,19 +132,23 @@ def test_writer_retention_backup_and_reset(tmp_path: Path) -> None:
         finally:
             await close_database(database, writer)
         with pytest.raises(ValueError, match="exactly"):
-            database.reset_v3("wrong")
-        database.reset_v3("response-probes-v3")
+            database.reset_v4("wrong")
+        database.reset_v4("response-suite-v5")
         assert not database.path.exists()
 
     asyncio.run(scenario())
 
 
-def _make_minimal_v2(path: Path, deployment_id: str) -> None:
+def _make_minimal_v3(path: Path, deployment_id: str) -> None:
     connection = sqlite3.connect(path)
     try:
         connection.executescript(
             """
-            PRAGMA user_version=2;
+            PRAGMA user_version=3;
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
             CREATE TABLE deployments (
                 deployment_id TEXT PRIMARY KEY
             );
@@ -153,7 +164,12 @@ def _make_minimal_v2(path: Path, deployment_id: str) -> None:
                 error_code TEXT,
                 profile_id TEXT,
                 definition_version TEXT NOT NULL,
+                suite_version TEXT,
                 vantage_id TEXT,
+                collection_mode TEXT,
+                fixture_id TEXT,
+                block_id TEXT,
+                scheduler_lag_seconds REAL,
                 confirmation_of INTEGER,
                 measurement_json TEXT NOT NULL
             );
@@ -161,13 +177,18 @@ def _make_minimal_v2(path: Path, deployment_id: str) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 schema_version INTEGER NOT NULL,
                 started_at TEXT NOT NULL,
-                reason TEXT NOT NULL
+                reason TEXT NOT NULL,
+                collection_mode TEXT NOT NULL,
+                suite_version TEXT NOT NULL
             );
-            CREATE TABLE scrape_snapshots(id INTEGER);
-            CREATE TABLE metric_accumulators(id INTEGER);
-            CREATE TABLE rollups(id INTEGER);
-            CREATE TABLE metrics_sources(id INTEGER);
-            CREATE TABLE budget_usage(id INTEGER);
+            CREATE TABLE budget_usage (
+                deployment_id TEXT NOT NULL,
+                budget_date TEXT NOT NULL,
+                short_requests INTEGER NOT NULL DEFAULT 0,
+                context_requests INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(deployment_id, budget_date)
+            );
             """
         )
         connection.execute(
@@ -179,32 +200,43 @@ def _make_minimal_v2(path: Path, deployment_id: str) -> None:
                 deployment_id, kind, scheduled_at, started_at, finished_at,
                 outcome, error_class, profile_id, definition_version,
                 vantage_id, measurement_json
-            ) VALUES (?, 'experience_short', ?, ?, ?, 'success', 'none',
-                      'interactive-short-v1', '1', 'old-vantage', '{}')
+            ) VALUES (?, 'experience', ?, ?, ?, 'success', 'none',
+                      'response-v4', '4', 'old-vantage', '{}')
             """,
             (deployment_id, isoformat(), isoformat(), isoformat()),
         )
         connection.execute(
             """
-            INSERT INTO collection_epochs(schema_version, started_at, reason)
-            VALUES (2, ?, 'old')
+            INSERT INTO collection_epochs(schema_version, started_at, reason,
+                                          collection_mode, suite_version)
+            VALUES (3, ?, 'old', 'standard', 'response-suite-v4')
             """,
             (isoformat(),),
+        )
+        connection.execute(
+            """
+            INSERT INTO budget_usage(deployment_id, budget_date,
+                                     short_requests, context_requests, output_tokens)
+            VALUES (?, ?, 2, 1, 500)
+            """,
+            (deployment_id, datetime.now(UTC).date().isoformat()),
         )
         connection.commit()
     finally:
         connection.close()
 
 
-def test_v2_migration_backs_up_and_preserves_probe_history(tmp_path: Path) -> None:
+def test_v3_to_v4_migration_preserves_history_and_adds_ledger(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
         storage = storage_at(tmp_path)
         database = Database(storage)
         database.prepare_directories()
         deployment_id = "legacy-deployment"
-        _make_minimal_v2(database.path, deployment_id)
+        _make_minimal_v3(database.path, deployment_id)
         await database.migrate(collection_mode="rapid")
-        assert await database.scalar("PRAGMA user_version") == 3
+        assert await database.scalar("PRAGMA user_version") == 4
         assert await database.scalar("SELECT COUNT(*) FROM probe_runs") == 1
         tables = {
             row["name"]
@@ -212,7 +244,8 @@ def test_v2_migration_backs_up_and_preserves_probe_history(tmp_path: Path) -> No
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )
         }
-        assert "scrape_snapshots" not in tables
+        assert "budget_usage" not in tables
+        assert "budget_ledger" in tables
         assert list(database.backup_dir.glob("observatory-*.sqlite3"))
 
     asyncio.run(scenario())

@@ -35,9 +35,14 @@ class ResponseState(StrEnum):
 class ProbeKind(StrEnum):
     ROUTE = "route"
     CANARY = "canary"
-    EXPERIENCE_SHORT = "experience_short"
-    EXPERIENCE_CONTEXT = "experience_context"
+    EXPERIENCE = "experience"
     CONFIRMATION = "confirmation"
+
+
+class ContextTier(StrEnum):
+    T1K = "1k"
+    T16K = "16k"
+    T64K = "64k"
 
 
 class ProbeOutcome(StrEnum):
@@ -56,7 +61,7 @@ class ProbeResult(FrozenModel):
     error_class: ErrorClass = ErrorClass.NONE
     error_code: str | None = None
     profile_id: str | None = None
-    definition_version: str = "4"
+    definition_version: str = "5"
     suite_version: str | None = None
     vantage_id: str | None = None
     collection_mode: str | None = None
@@ -64,11 +69,12 @@ class ProbeResult(FrozenModel):
     block_id: str | None = None
     scheduler_lag_seconds: float | None = None
     confirmation_of: int | None = None
+    context_tier: str | None = None
     measurements: dict[str, float | int | str | None] = Field(default_factory=dict)
 
 
 class ApiEnvelope(FrozenModel):
-    schema_version: Literal["5"] = "5"
+    schema_version: Literal["6"] = "6"
     generated_at: datetime = Field(default_factory=utc_now)
     data_window: str
     freshness_seconds: float | None

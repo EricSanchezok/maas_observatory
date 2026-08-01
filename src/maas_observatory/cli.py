@@ -18,6 +18,7 @@ from maas_common.catalog import (
     load_model_catalog,
 )
 from maas_observatory.database import Database
+from maas_observatory.fixtures import FIXTURE_IDS
 from maas_observatory.models import ProbeKind
 from maas_observatory.probes import ProbeRunner, fixture_prompt
 from maas_observatory.runtime import serve as serve_runtime
@@ -80,7 +81,7 @@ def inventory(
         bool,
         typer.Option(
             "--generation/--no-generation",
-            help="Run one manually authorized short streaming request per model.",
+            help="Run one manually authorized 1K Agent response request per model.",
         ),
     ] = False,
 ) -> None:
@@ -108,14 +109,13 @@ def inventory(
                         profile = "invalid"
                     stream = None
                     if generation:
-                        fixture_id, prompt = fixture_prompt(
-                            ProbeKind.EXPERIENCE_SHORT, 0, "manual-check-000"
-                        )
+                        fid = FIXTURE_IDS[0]
+                        _, payload = fixture_prompt(fid, "manual-check-000")
                         stream = await runner.generation(
                             deployment,
-                            ProbeKind.EXPERIENCE_SHORT,
-                            fixture_id=fixture_id,
-                            prompt=prompt,
+                            ProbeKind.EXPERIENCE,
+                            fixture_id=fid,
+                            prompt_data=payload,
                             force=True,
                         )
                     results.append(
@@ -139,7 +139,7 @@ def inventory(
 @probe_app.command("run")
 def probe_run(
     model: Annotated[str, typer.Option("--model")],
-    kind: Annotated[ProbeKind, typer.Option()] = ProbeKind.EXPERIENCE_SHORT,
+    kind: Annotated[ProbeKind, typer.Option()] = ProbeKind.EXPERIENCE,
     force: Annotated[bool, typer.Option()] = False,
     config: Annotated[Path, typer.Option()] = DEFAULT_OBSERVABILITY_CONFIG,
     catalog: Annotated[Path, typer.Option()] = DEFAULT_CATALOG,
@@ -163,12 +163,13 @@ def probe_run(
                 if kind == ProbeKind.ROUTE:
                     result = await runner.route_liveness(deployment)
                 else:
-                    fixture_id, prompt = fixture_prompt(kind, 0, "manual-check-000")
+                    fid = FIXTURE_IDS[0]
+                    _, payload = fixture_prompt(fid, "manual-check-000")
                     result = await runner.generation(
                         deployment,
                         kind,
-                        fixture_id=fixture_id,
-                        prompt=prompt,
+                        fixture_id=fid,
+                        prompt_data=payload,
                         force=force,
                     )
                 typer.echo(result.model_dump_json(indent=2))
@@ -228,14 +229,14 @@ def db_reset(
 
     settings = load_observability_settings(config)
     database = Database(settings.storage)
-    database.reset_v3(confirm)
+    database.reset_v4(confirm)
     asyncio.run(
         database.migrate(
             collection_mode=settings.collection_mode,
             suite_version=settings.experience.suite_version,
         )
     )
-    typer.echo("database reset complete; response-probes-v3 epoch started")
+    typer.echo("database reset complete; response-suite-v5 epoch started")
 
 
 @app.command("export")

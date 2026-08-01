@@ -1,4 +1,8 @@
-"""Response state derived only from route liveness checks."""
+"""Response state derived only from route liveness checks.
+
+Regression baselines are now isolated by context tier so that a 64K
+regression does not affect 1K/16K states.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,8 @@ from maas_common.catalog import ModelCatalog
 from maas_observatory.database import Database, isoformat
 from maas_observatory.models import ResponseState
 from maas_observatory.settings import ObservatorySettings
+
+ALL_TIERS = ("1k", "16k", "64k")
 
 
 class StateEngine:
@@ -49,10 +55,10 @@ class StateEngine:
             SELECT finished_at
             FROM probe_runs
             WHERE deployment_id=?
-              AND kind IN ('experience_short', 'experience_context')
+              AND kind='experience'
               AND profile_id=? AND definition_version=?
               AND suite_version=? AND collection_mode=?
-              AND outcome!='skipped'
+              AND outcome='success'
             ORDER BY finished_at DESC LIMIT 1
             """,
             (
@@ -106,17 +112,31 @@ class StateEngine:
         )
 
     async def _regression(self, deployment_id: str) -> list[str]:
+        """Aggregate regressions across all context tiers.
+
+        Each tier is evaluated independently — a 64K regression does not
+        affect 1K/16K and vice versa.
+        """
+        all_regressions: list[str] = []
+        for tier in ALL_TIERS:
+            tier_regressions = await self._regression_for_tier(deployment_id, tier)
+            all_regressions.extend(tier_regressions)
+        return all_regressions
+
+    async def _regression_for_tier(self, deployment_id: str, tier: str) -> list[str]:
         rows = await self.database.query(
             """
             SELECT measurement_json FROM probe_runs
             WHERE deployment_id=?
-              AND kind IN ('experience_short', 'experience_context')
+              AND kind='experience'
+              AND context_tier=?
               AND profile_id=? AND definition_version=? AND suite_version=?
               AND outcome='success' AND finished_at>=?
             ORDER BY finished_at DESC
             """,
             (
                 deployment_id,
+                tier,
                 self.settings.experience.response_profile_id,
                 self.settings.experience.definition_version,
                 self.settings.experience.suite_version,
@@ -146,9 +166,9 @@ class StateEngine:
             if direction == "high" and all(
                 value > baseline * ratio for value in latest
             ):
-                regressions.append(f"{metric}_regression")
+                regressions.append(f"{tier}:{metric}_regression")
             if direction == "low" and all(value < baseline * ratio for value in latest):
-                regressions.append(f"{metric}_regression")
+                regressions.append(f"{tier}:{metric}_regression")
         return regressions
 
     async def persist(
@@ -248,27 +268,29 @@ class StateEngine:
     async def _persist_regression(
         self, deployment_id: str, regressions: list[str]
     ) -> None:
-        active = await self.database.scalar(
-            """
-            SELECT COUNT(*) FROM events
-            WHERE deployment_id=? AND event_key='response:regression'
-              AND ended_at IS NULL
-            """,
-            (deployment_id,),
-        )
-        if active:
-            return
-        now = isoformat()
-        await self.database.write(
-            """
-            INSERT INTO events(
-                deployment_id, event_key, kind, severity, state,
-                title, detail_json, started_at
-            ) VALUES (?, 'response:regression', 'response_regression',
-                      'warning', 'open', 'Response changed', ?, ?)
-            """,
-            (deployment_id, json.dumps({"reasons": regressions}), now),
-        )
+        for reason in regressions:
+            event_key = f"response:regression:{reason}"
+            active = await self.database.scalar(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE deployment_id=? AND event_key=?
+                  AND ended_at IS NULL
+                """,
+                (deployment_id, event_key),
+            )
+            if active:
+                continue
+            now = isoformat()
+            await self.database.write(
+                """
+                INSERT INTO events(
+                    deployment_id, event_key, kind, severity, state,
+                    title, detail_json, started_at
+                ) VALUES (?, ?, 'response_regression',
+                          'warning', 'open', 'Response changed', ?, ?)
+                """,
+                (deployment_id, event_key, json.dumps({"reasons": [reason]}), now),
+            )
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from maas_common.catalog import PROJECT_ROOT, StrictModel
 
@@ -33,9 +33,10 @@ class StorageSettings(StrictModel):
         return self.root if self.root.is_absolute() else project_root / self.root
 
 
-class StandardBudget(StrictModel):
-    response_requests: int = Field(default=240, ge=0)
-    output_tokens: int = Field(default=3932160, ge=0)
+class DailyBudget(StrictModel):
+    requests: int = Field(default=240, ge=0)
+    input_tokens: int = Field(default=5_000_000, ge=0)
+    output_tokens: int = Field(default=3_932_160, ge=0)
 
 
 class ProbeSettings(StrictModel):
@@ -44,30 +45,36 @@ class ProbeSettings(StrictModel):
     response_start_timeout_seconds: int = Field(default=180, ge=10)
     stream_stall_seconds: int = Field(default=30, ge=1)
     canary_max_output_tokens: int = Field(default=8, ge=1)
-    short_max_output_tokens: int = Field(default=16384, ge=2)
-    context_max_output_tokens: int = Field(default=16384, ge=2)
+    experience_max_output_tokens: int = Field(default=16384, ge=2)
     rapid_block_interval_seconds: int = Field(default=60, ge=10)
+    rapid_context_tier: Literal["1k", "16k", "64k"] | None = None
     standard_block_interval_seconds: int = Field(default=600, ge=60)
-    standard_budget: StandardBudget = Field(default_factory=StandardBudget)
+    daily_budget: DailyBudget = Field(default_factory=DailyBudget)
 
 
 class ExperienceSettings(StrictModel):
     vantage_id: str = Field(default="observatory-primary", min_length=1)
-    suite_version: str = "response-suite-v4"
-    response_profile_id: str = "response-v4"
-    definition_version: str = "4"
+    suite_version: str = "response-suite-v5"
+    response_profile_id: str = "response-v5"
+    definition_version: str = "5"
     summary_min_samples: int = Field(default=6, ge=6)
     baseline_min_samples: int = Field(default=20, ge=3)
 
 
 class ObservatorySettings(StrictModel):
-    schema_version: Literal[3]
+    schema_version: Literal[4]
     server: ServerSettings = Field(default_factory=ServerSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     probes: ProbeSettings = Field(default_factory=ProbeSettings)
     profiles: dict[str, str]
     experience: ExperienceSettings = Field(default_factory=ExperienceSettings)
     collection_mode: CollectionMode = "standard"
+
+    @model_validator(mode="after")
+    def validate_rapid_tier(self) -> ObservatorySettings:
+        if self.collection_mode == "rapid" and self.probes.rapid_context_tier is None:
+            raise ValueError("rapid mode requires probes.rapid_context_tier")
+        return self
 
     def interval_for(self) -> int:
         if self.collection_mode == "rapid":
@@ -93,6 +100,15 @@ def load_observability_settings(
                 "MAAS_OBSERVATORY_COLLECTION_MODE must be rapid or standard"
             )
         payload = {**payload, "collection_mode": mode}
+    rapid_tier = os.getenv("MAAS_OBSERVATORY_RAPID_CONTEXT_TIER")
+    if rapid_tier is not None:
+        if rapid_tier not in {"1k", "16k", "64k"}:
+            raise ValueError(
+                "MAAS_OBSERVATORY_RAPID_CONTEXT_TIER must be 1k, 16k, or 64k"
+            )
+        probes = dict(payload.get("probes") or {})
+        probes["rapid_context_tier"] = rapid_tier
+        payload = {**payload, "probes": probes}
     settings = ObservatorySettings.model_validate(payload)
     cors_value = os.getenv("MAAS_OBSERVATORY_CORS_ORIGINS")
     if cors_value is not None:

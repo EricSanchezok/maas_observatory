@@ -17,9 +17,9 @@ import aiosqlite
 from maas_common.catalog import ModelCatalog
 from maas_observatory.settings import StorageSettings
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
-SCHEMA_3 = """
+SCHEMA_4 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS probe_runs (
     block_id TEXT,
     scheduler_lag_seconds REAL,
     confirmation_of INTEGER REFERENCES probe_runs(id),
+    context_tier TEXT,
     measurement_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_probe_deployment_kind_time
@@ -124,12 +125,15 @@ CREATE TABLE IF NOT EXISTS collection_blocks (
     scheduler_lag_seconds REAL NOT NULL,
     status TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS budget_usage (
+CREATE TABLE IF NOT EXISTS budget_ledger (
     deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
     budget_date TEXT NOT NULL,
-    short_requests INTEGER NOT NULL DEFAULT 0,
-    context_requests INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
+    requests_reserved INTEGER NOT NULL DEFAULT 0,
+    requests_settled INTEGER NOT NULL DEFAULT 0,
+    input_tokens_reserved INTEGER NOT NULL DEFAULT 0,
+    input_tokens_settled INTEGER NOT NULL DEFAULT 0,
+    output_tokens_reserved INTEGER NOT NULL DEFAULT 0,
+    output_tokens_settled INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(deployment_id, budget_date)
 );
 CREATE TABLE IF NOT EXISTS experience_profiles (
@@ -150,61 +154,20 @@ CREATE TABLE IF NOT EXISTS collection_epochs (
 );
 """
 
-MIGRATE_2_TO_3 = """
-ALTER TABLE probe_runs ADD COLUMN suite_version TEXT;
-ALTER TABLE probe_runs ADD COLUMN collection_mode TEXT;
-ALTER TABLE probe_runs ADD COLUMN fixture_id TEXT;
-ALTER TABLE probe_runs ADD COLUMN block_id TEXT;
-ALTER TABLE probe_runs ADD COLUMN scheduler_lag_seconds REAL;
-DROP TABLE IF EXISTS state_history;
-DROP TABLE IF EXISTS current_states;
-DROP TABLE IF EXISTS rollups;
-DROP TABLE IF EXISTS metric_accumulators;
-DROP TABLE IF EXISTS scrape_snapshots;
-DROP TABLE IF EXISTS metrics_sources;
+MIGRATE_3_TO_4 = """
+ALTER TABLE probe_runs ADD COLUMN context_tier TEXT;
 DROP TABLE IF EXISTS budget_usage;
-CREATE TABLE current_states (
-    deployment_id TEXT PRIMARY KEY REFERENCES deployments(deployment_id),
-    response_state TEXT NOT NULL DEFAULT 'collecting',
-    reasons_json TEXT NOT NULL,
-    last_route_at TEXT,
-    last_response_at TEXT,
-    evaluated_at TEXT NOT NULL
-);
-CREATE TABLE state_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
-    response_state TEXT NOT NULL,
-    reasons_json TEXT NOT NULL,
-    started_at TEXT NOT NULL,
-    ended_at TEXT
-);
-CREATE TABLE budget_usage (
+CREATE TABLE budget_ledger (
     deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
     budget_date TEXT NOT NULL,
-    short_requests INTEGER NOT NULL DEFAULT 0,
-    context_requests INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
+    requests_reserved INTEGER NOT NULL DEFAULT 0,
+    requests_settled INTEGER NOT NULL DEFAULT 0,
+    input_tokens_reserved INTEGER NOT NULL DEFAULT 0,
+    input_tokens_settled INTEGER NOT NULL DEFAULT 0,
+    output_tokens_reserved INTEGER NOT NULL DEFAULT 0,
+    output_tokens_settled INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(deployment_id, budget_date)
 );
-CREATE TABLE collection_blocks (
-    block_id TEXT PRIMARY KEY,
-    profile_id TEXT NOT NULL,
-    fixture_id TEXT NOT NULL,
-    collection_mode TEXT NOT NULL,
-    scheduled_at TEXT NOT NULL,
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    order_json TEXT NOT NULL,
-    scheduler_lag_seconds REAL NOT NULL,
-    status TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_probe_profile_fixture
-    ON probe_runs(profile_id, definition_version, fixture_id, finished_at);
-ALTER TABLE collection_epochs ADD COLUMN collection_mode TEXT
-    NOT NULL DEFAULT 'standard';
-ALTER TABLE collection_epochs ADD COLUMN suite_version TEXT
-    NOT NULL DEFAULT 'response-suite-v4';
 """
 
 
@@ -258,7 +221,7 @@ class Database:
         self,
         *,
         collection_mode: str = "standard",
-        suite_version: str = "response-suite-v4",
+        suite_version: str = "response-suite-v5",
     ) -> None:
         self.prepare_directories()
         version = await self._schema_version()
@@ -267,29 +230,24 @@ class Database:
                 f"database schema {version} is newer than supported {SCHEMA_VERSION}"
             )
         if version == 1:
-            raise RuntimeError("schema v1 is unsupported; reset to response-probes-v3")
+            raise RuntimeError("schema v1 is unsupported; reset to response-suite-v5")
         if version == 2:
+            await self.backup()
+        if version == 3:
             await self.backup()
         connection = await aiosqlite.connect(self.path)
         try:
             await self._configure(connection)
             await connection.execute("PRAGMA journal_mode=WAL")
             await connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
-            if version == 0:
-                await connection.executescript(SCHEMA_3)
-            elif version == 2:
-                await connection.executescript(MIGRATE_2_TO_3)
-                await connection.executescript(SCHEMA_3)
-                await connection.execute(
-                    """
-                    DELETE FROM events
-                    WHERE kind IN ('service_state', 'telemetry_state')
-                    """
-                )
-            if version < 3:
+            if version in (0, 2):
+                await connection.executescript(SCHEMA_4)
+            elif version == 3:
+                await connection.executescript(MIGRATE_3_TO_4)
+            if version < 4:
                 await connection.execute(
                     "INSERT OR REPLACE INTO schema_migrations(version, applied_at) "
-                    "VALUES (3, ?)",
+                    "VALUES (4, ?)",
                     (isoformat(),),
                 )
                 await connection.execute(
@@ -297,11 +255,11 @@ class Database:
                     INSERT INTO collection_epochs(
                         schema_version, started_at, reason,
                         collection_mode, suite_version
-                    ) VALUES (3, ?, 'response-probes-v3', ?, ?)
+                    ) VALUES (4, ?, 'response-suite-v5', ?, ?)
                     """,
                     (isoformat(), collection_mode, suite_version),
                 )
-                await connection.execute("PRAGMA user_version=3")
+                await connection.execute("PRAGMA user_version=4")
             await connection.commit()
         finally:
             await connection.close()
@@ -380,7 +338,6 @@ class Database:
 
     async def recover_incomplete_blocks(self) -> None:
         """Close blocks left running by a previous process termination."""
-
         await self.write(
             """
             UPDATE collection_blocks
@@ -462,9 +419,9 @@ class Database:
                 tuple(active_ids),
             )
 
-    def reset_v3(self, confirmation: str) -> None:
-        if confirmation != "response-probes-v3":
-            raise ValueError("confirmation must be exactly response-probes-v3")
+    def reset_v4(self, confirmation: str) -> None:
+        if confirmation != "response-suite-v5":
+            raise ValueError("confirmation must be exactly response-suite-v5")
         for path in (
             self.path,
             self.path.with_name(f"{self.path.name}-wal"),

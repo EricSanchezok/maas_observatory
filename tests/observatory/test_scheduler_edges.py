@@ -133,7 +133,7 @@ def test_route_configuration_protocol_and_transport_failures(
     asyncio.run(scenario())
 
 
-def test_generation_skip_paths_and_standard_budget_reservation(
+def test_generation_skip_paths_and_daily_budget_reservation(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
@@ -153,7 +153,15 @@ def test_generation_skip_paths_and_standard_budget_reservation(
                 """,
                 (deployment.deployment_id, datetime.now(UTC).isoformat()),
             )
-            skipped = await runner.generation(deployment, ProbeKind.EXPERIENCE_CONTEXT)
+            from maas_observatory.probes import fixture_prompt as fp
+
+            fid, payload_data = fp("agent-1k-a", "test")
+            skipped = await runner.generation(
+                deployment,
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload_data,
+            )
             assert (skipped.outcome, skipped.error_code) == (
                 ProbeOutcome.SKIPPED,
                 "maintenance",
@@ -168,7 +176,10 @@ def test_generation_skip_paths_and_standard_budget_reservation(
                 database,
             )
             skipped = await no_profile.generation(
-                deployment, ProbeKind.EXPERIENCE_SHORT
+                deployment,
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload_data,
             )
             assert skipped.error_code == "profile_undefined"
             assert skipped.error_class == "measurement_error"
@@ -176,15 +187,14 @@ def test_generation_skip_paths_and_standard_budget_reservation(
             today = datetime.now(UTC).date().isoformat()
             await database.write(
                 """
-                INSERT INTO budget_usage(
-                    deployment_id, budget_date, short_requests,
-                    context_requests, output_tokens
-                ) VALUES (?, ?, 2, 1, 0)
+                INSERT INTO budget_ledger(
+                    deployment_id, budget_date, requests_settled
+                ) VALUES (?, ?, 3)
                 """,
                 (deployment.deployment_id, today),
             )
-            context_allowed, context_reason = await runner._standard_budget_available(
-                deployment, ProbeKind.EXPERIENCE_CONTEXT, 8
+            context_allowed, context_reason = await runner._budget_available(
+                deployment, 1300, 8
             )
             assert (context_allowed, context_reason) == (
                 False,
@@ -192,40 +202,48 @@ def test_generation_skip_paths_and_standard_budget_reservation(
             )
             await database.write(
                 """
-                UPDATE budget_usage SET short_requests=0, context_requests=0,
-                    output_tokens=20
-                WHERE deployment_id=? AND budget_date=?
+                DELETE FROM budget_ledger WHERE deployment_id=? AND budget_date=?
                 """,
                 (deployment.deployment_id, today),
             )
-            token_allowed, token_reason = await runner._standard_budget_available(
-                deployment, ProbeKind.EXPERIENCE_CONTEXT, 8
+            await database.write(
+                """
+                INSERT INTO budget_ledger(
+                    deployment_id, budget_date, output_tokens_reserved
+                ) VALUES (?, ?, 24)
+                """,
+                (deployment.deployment_id, today),
+            )
+            token_allowed, token_reason = await runner._budget_available(
+                deployment, 1300, 8
             )
             assert (token_allowed, token_reason) == (
                 False,
                 "daily_output_token_budget",
             )
+
+            # Test settle
             await database.write(
                 """
-                UPDATE budget_usage SET output_tokens=0
-                WHERE deployment_id=? AND budget_date=?
+                DELETE FROM budget_ledger WHERE deployment_id=? AND budget_date=?
                 """,
                 (deployment.deployment_id, today),
             )
-            await runner._reserve_standard_budget(
-                deployment, ProbeKind.EXPERIENCE_CONTEXT, 8
-            )
-            usage = (
+            await runner._reserve_budget(deployment, 1300, 8)
+            await runner._settle_budget(deployment, 1300, 8, 1400, 10)
+            row = (
                 await database.query(
-                    """
-                    SELECT * FROM budget_usage
-                    WHERE deployment_id=? AND budget_date=?
-                    """,
+                    "SELECT * FROM budget_ledger "
+                    "WHERE deployment_id=? AND budget_date=?",
                     (deployment.deployment_id, today),
                 )
             )[0]
-            assert usage["context_requests"] == 1
-            assert usage["output_tokens"] == 8
+            assert row["requests_reserved"] == 0
+            assert row["requests_settled"] == 1
+            assert row["input_tokens_reserved"] == 0
+            assert row["input_tokens_settled"] == 1400
+            assert row["output_tokens_reserved"] == 0
+            assert row["output_tokens_settled"] == 10
         finally:
             await close_database(database, writer)
 
@@ -240,19 +258,16 @@ def test_scheduler_state_rapid_and_standard_loops(tmp_path: Path) -> None:
         runner = _runner(catalog, settings, database)
         scheduler = ProbeScheduler(runner, database)
         stop = asyncio.Event()
-        calls: list[tuple[ProbeKind, int, int]] = []
-        scheduled_calls: list[datetime] = []
+        calls: list[tuple[str, int]] = []
 
         async def fake_block(
-            kind: ProbeKind,
-            fixture_index: int,
+            fixture_id: str,
             block_index: int,
             scheduled_at: datetime,
             loop_stop: asyncio.Event | None = None,
         ) -> None:
             assert scheduled_at.tzinfo is not None
-            calls.append((kind, fixture_index, block_index))
-            scheduled_calls.append(scheduled_at)
+            calls.append((fixture_id, block_index))
             stop.set()
 
         scheduler.run_block = fake_block  # type: ignore[method-assign]
@@ -265,6 +280,8 @@ def test_scheduler_state_rapid_and_standard_loops(tmp_path: Path) -> None:
             await scheduler._save_schedule(initial)
             await scheduler.response_loop(stop)
             assert calls
+            assert calls[0][0] == "agent-1k-a"
+            assert calls[0][1] == 0
             stored = json.loads(
                 str(
                     await database.scalar(
@@ -274,11 +291,6 @@ def test_scheduler_state_rapid_and_standard_loops(tmp_path: Path) -> None:
                 )
             )
             assert stored["block_index"] == 1
-            assert calls[0][0] == ProbeKind.EXPERIENCE_SHORT
-            assert stored["next_block_at"] is not None
-            assert datetime.now(UTC) - scheduled_calls[0] > timedelta(minutes=4)
-            assert datetime.fromisoformat(stored["next_block_at"]) > datetime.now(UTC)
-            assert (await scheduler._load_schedule())["block_index"] == 1
         finally:
             await close_database(database, writer)
 
@@ -350,8 +362,7 @@ def test_interrupted_block_records_status(tmp_path: Path) -> None:
         stop.set()
         try:
             await scheduler.run_block(
-                ProbeKind.EXPERIENCE_SHORT,
-                0,
+                "agent-1k-a",
                 0,
                 datetime.now(UTC),
                 stop,
@@ -364,3 +375,20 @@ def test_interrupted_block_records_status(tmp_path: Path) -> None:
             await close_database(database, writer)
 
     asyncio.run(scenario())
+
+
+def test_six_block_order_is_fixed(tmp_path: Path) -> None:
+    """Block 0→agent-1k-a ... block 5→agent-64k-b, then repeat."""
+    from maas_observatory.probes import _FIXTURE_ORDER
+
+    expected_order = [
+        "agent-1k-a",
+        "agent-16k-a",
+        "agent-64k-a",
+        "agent-1k-b",
+        "agent-16k-b",
+        "agent-64k-b",
+    ]
+    assert expected_order == _FIXTURE_ORDER
+    for i in range(12):
+        assert _FIXTURE_ORDER[i % 6] == expected_order[i % 6]

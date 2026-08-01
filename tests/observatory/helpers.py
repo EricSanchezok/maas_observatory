@@ -23,7 +23,7 @@ def configured_catalog() -> ModelCatalog:
 def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings:
     return ObservatorySettings.model_validate(
         {
-            "schema_version": 3,
+            "schema_version": 4,
             "collection_mode": mode,
             "server": {"host": "127.0.0.1", "port": 8080},
             "storage": {
@@ -40,12 +40,13 @@ def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings
                 "response_start_timeout_seconds": 10,
                 "stream_stall_seconds": 2,
                 "canary_max_output_tokens": 8,
-                "short_max_output_tokens": 8,
-                "context_max_output_tokens": 8,
+                "experience_max_output_tokens": 8,
                 "rapid_block_interval_seconds": 10,
+                "rapid_context_tier": "1k" if mode == "rapid" else None,
                 "standard_block_interval_seconds": 60,
-                "standard_budget": {
-                    "response_requests": 3,
+                "daily_budget": {
+                    "requests": 3,
+                    "input_tokens": 100_000,
                     "output_tokens": 24,
                 },
             },
@@ -59,9 +60,9 @@ def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings
             },
             "experience": {
                 "vantage_id": "test-vantage",
-                "suite_version": "response-suite-v4",
-                "response_profile_id": "response-v4",
-                "definition_version": "4",
+                "suite_version": "response-suite-v5",
+                "response_profile_id": "response-v5",
+                "definition_version": "5",
                 "summary_min_samples": 6,
                 "baseline_min_samples": 20,
             },
@@ -109,16 +110,17 @@ async def insert_probe(
     database: Database,
     deployment_id: str,
     *,
-    kind: str = "experience_short",
+    kind: str = "experience",
     outcome: str = "success",
     error_class: str = "none",
     error_code: str | None = None,
-    profile_id: str = "response-v4",
-    fixture_id: str = "response-01",
+    profile_id: str = "response-v5",
+    fixture_id: str = "agent-1k-a",
     collection_mode: str = "rapid",
     finished_at: str | None = None,
     measurement: dict[str, Any] | None = None,
     confirmation_of: int | None = None,
+    context_tier: str | None = None,
 ) -> int:
     timestamp = finished_at or isoformat()
     return await database.write(
@@ -128,9 +130,9 @@ async def insert_probe(
             outcome, error_class, error_code, profile_id,
             definition_version, suite_version, vantage_id,
             collection_mode, fixture_id, block_id, scheduler_lag_seconds,
-            confirmation_of, measurement_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '4', 'response-suite-v4',
-                  'test-vantage', ?, ?, 'test-block', 0, ?, ?)
+            confirmation_of, context_tier, measurement_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '5', 'response-suite-v5',
+                  'test-vantage', ?, ?, 'test-block', 0, ?, ?, ?)
         """,
         (
             deployment_id,
@@ -141,14 +143,17 @@ async def insert_probe(
             outcome,
             error_class,
             error_code,
-            profile_id if kind.startswith("experience") else None,
+            profile_id if kind == "experience" else None,
             collection_mode,
-            fixture_id if kind.startswith("experience") else None,
+            fixture_id if kind == "experience" else None,
             confirmation_of,
+            context_tier,
             json.dumps(
                 measurement
                 or {
                     "first_response_seconds": 0.5,
+                    "first_token_seconds": 0.3,
+                    "total_response_seconds": 2.1,
                     "output_speed_tps": 15.0,
                     "reported_prompt_tokens": 32,
                     "reported_completion_tokens": 8,

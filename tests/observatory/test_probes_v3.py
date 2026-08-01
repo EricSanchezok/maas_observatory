@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from maas_observatory.fixtures import FIXTURE_IDS
 from maas_observatory.models import ErrorClass, ProbeKind, ProbeOutcome
 from maas_observatory.probes import (
     ProbeRunner,
@@ -17,7 +18,6 @@ from maas_observatory.probes import (
     balanced_order,
     block_nonce,
     classify_error,
-    fixture_hashes,
     fixture_prompt,
     profile_definitions,
 )
@@ -33,11 +33,19 @@ def _sse_response(
     *,
     usage: bool = True,
     visible: bool = True,
+    tool_call: bool = False,
     status: int = 200,
+    prompt_tokens: int = 1_000,
+    reasoning_tokens: int | None = 5,
 ) -> httpx.Response:
     lines = [
         'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}',
     ]
+    if tool_call:
+        lines.append(
+            'data: {"choices":[{"delta":{"tool_calls":'
+            '[{"index":0,"function":{"name":"f"}}]}}]}'
+        )
     if visible:
         lines.extend(
             [
@@ -48,7 +56,22 @@ def _sse_response(
         )
     if usage:
         lines.append(
-            'data: {"choices":[],"usage":{"prompt_tokens":32,"completion_tokens":8}}'
+            "data: "
+            + json.dumps(
+                {
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": 8,
+                        "completion_tokens_details": (
+                            {"reasoning_tokens": reasoning_tokens}
+                            if reasoning_tokens is not None
+                            else {}
+                        ),
+                    },
+                },
+                separators=(",", ":"),
+            )
         )
     lines.append("data: [DONE]")
     return httpx.Response(
@@ -69,20 +92,16 @@ class _DelayedStream(httpx.AsyncByteStream):
         yield b"data: [DONE]\n\n"
 
 
-def test_suite_fixtures_nonce_and_balanced_order() -> None:
+def test_fixture_prompt_and_balanced_order() -> None:
     catalog = configured_catalog()
-    short_id, short = fixture_prompt(ProbeKind.EXPERIENCE_SHORT, 0, "abc")
-    long_id, long_prompt = fixture_prompt(ProbeKind.EXPERIENCE_CONTEXT, 0, "abc")
-    assert short_id == "response-01"
-    assert "abc" in short[:40]
-    assert long_id == "response-04"
-    assert len(long_prompt.encode()) == 16 * 1024
-    assert "abc" in long_prompt[:40]
-    hashes = fixture_hashes()
-    assert len(hashes) == 6
-    assert all(len(value) == 64 for value in hashes.values())
+    fid, payload = fixture_prompt("agent-1k-a", "abc")
+    assert fid == "agent-1k-a"
+    assert "abc" in payload["messages"][-1]["content"]
+
+    # Verify deterministic nonce
     assert block_nonce(1, 2) == block_nonce(1, 2)
     assert block_nonce(1, 2) != block_nonce(1, 3)
+
     orders = [
         [item.deployment_id for item in balanced_order(list(catalog.deployments), i)]
         for i in range(18)
@@ -91,13 +110,12 @@ def test_suite_fixtures_nonce_and_balanced_order() -> None:
     assert {order[0] for order in orders[:9]} == {
         item.deployment_id for item in catalog.deployments
     }
+
     settings = make_settings(Path("/tmp"))
     definitions = profile_definitions(settings.experience, settings.probes)
-    assert {item["kind"] for item in definitions} == {"balanced_response"}
+    assert {item["kind"] for item in definitions} == {"agent_response"}
     assert len(definitions[0]["fixtures"]) == 6
-    assert {
-        item["configured_max_output_tokens"] for item in definitions[0]["fixtures"]
-    } == {8}
+    assert definitions[0]["fixtures"][0]["fixture_id"] == "agent-1k-a"
 
 
 def test_error_classification() -> None:
@@ -166,33 +184,31 @@ def test_streaming_measurements_use_visible_content_and_reported_usage(
             deployment = catalog.deployments[0]
             route = await runner.route_liveness(deployment)
             assert route.outcome == ProbeOutcome.SUCCESS
+            fid, payload = fixture_prompt("agent-1k-a", "test-nonce")
             result = await runner.generation(
                 deployment,
-                ProbeKind.EXPERIENCE_SHORT,
-                fixture_id="response-01",
-                prompt="test",
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload,
                 block_id="block",
             )
             assert result.outcome == ProbeOutcome.SUCCESS
             assert result.measurements["first_response_seconds"] is not None
+            assert result.measurements["first_token_seconds"] is not None
+            assert result.measurements["total_response_seconds"] is not None
             assert float(result.measurements["first_response_seconds"]) >= float(
-                result.measurements["stream_start_seconds"]
+                result.measurements["first_token_seconds"]
             )
-            assert float(result.measurements["output_speed_tps"]) > 0
             assert result.measurements["reported_completion_tokens"] == 8
             assert result.measurements["reasoning_chars"] == 8
             assert result.measurements["reasoning_tokens_estimated"] == 2
-            payload = json.loads(
-                (
-                    await database.query(
-                        "SELECT measurement_json FROM probe_runs "
-                        "WHERE kind='experience_short'"
-                    )
-                )[0]["measurement_json"]
+            assert result.measurements["ref_prompt_tokens"] is not None
+            assert result.measurements["ref_prompt_tokens"] > 0
+            rows = await database.query(
+                "SELECT measurement_json FROM probe_runs WHERE kind='experience'"
             )
-            assert "hello" not in json.dumps(payload)
-            assert payload["reasoning_chars"] == 8
-            assert payload["reasoning_tokens_estimated"] == 2
+            payload_db = json.loads(rows[0]["measurement_json"])
+            assert "hello" not in json.dumps(payload_db)
         finally:
             await client.aclose()
             await close_database(database, writer)
@@ -222,11 +238,12 @@ def test_usage_missing_only_makes_output_speed_unavailable(tmp_path: Path) -> No
             client=client,
         )
         try:
+            fid, payload = fixture_prompt("agent-1k-a", "test")
             result = await runner.generation(
                 catalog.deployments[0],
-                ProbeKind.EXPERIENCE_SHORT,
-                fixture_id="response-01",
-                prompt="test",
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload,
             )
             assert result.outcome == ProbeOutcome.SUCCESS
             assert result.error_class == ErrorClass.MEASUREMENT
@@ -240,12 +257,17 @@ def test_usage_missing_only_makes_output_speed_unavailable(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
-def test_empty_output_and_http_failure_are_service_failures(tmp_path: Path) -> None:
+def test_empty_output_http_failure_and_tool_call(tmp_path: Path) -> None:
     async def scenario() -> None:
         settings = make_settings(tmp_path)
         catalog = configured_catalog()
         database, writer = await open_database(settings, catalog)
-        responses = [_sse_response(visible=False), _sse_response(status=503)]
+
+        responses = [
+            _sse_response(visible=False),
+            _sse_response(status=503),
+            _sse_response(tool_call=True),
+        ]
 
         def handler(request: httpx.Request) -> httpx.Response:
             response = responses.pop(0)
@@ -263,15 +285,24 @@ def test_empty_output_and_http_failure_are_service_failures(tmp_path: Path) -> N
             client=client,
         )
         try:
+            fid, payload = fixture_prompt("agent-1k-a", "test")
             empty = await runner.generation(
                 catalog.deployments[0],
-                ProbeKind.EXPERIENCE_SHORT,
-                prompt="test",
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload,
             )
             failed = await runner.generation(
                 catalog.deployments[1],
-                ProbeKind.EXPERIENCE_SHORT,
-                prompt="test",
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload,
+            )
+            tooled = await runner.generation(
+                catalog.deployments[2],
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload,
             )
             assert (empty.error_class, empty.error_code) == (
                 ErrorClass.SERVICE,
@@ -280,6 +311,10 @@ def test_empty_output_and_http_failure_are_service_failures(tmp_path: Path) -> N
             assert (failed.error_class, failed.error_code) == (
                 ErrorClass.SERVICE,
                 "http_503",
+            )
+            assert (tooled.error_class, tooled.error_code) == (
+                ErrorClass.SERVICE,
+                "unexpected_tool_call",
             )
         finally:
             await client.aclose()
@@ -324,15 +359,18 @@ def test_first_output_timeout_is_distinct_from_stream_stall(tmp_path: Path) -> N
             client=client,
         )
         try:
+            fid, payload = fixture_prompt("agent-16k-a", "test")
             no_output = await runner.generation(
                 catalog.deployments[0],
-                ProbeKind.EXPERIENCE_SHORT,
-                prompt="test",
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload,
             )
             stalled = await runner.generation(
                 catalog.deployments[1],
-                ProbeKind.EXPERIENCE_SHORT,
-                prompt="test",
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload,
             )
             assert (no_output.error_class, no_output.error_code) == (
                 ErrorClass.SERVICE,
@@ -381,10 +419,13 @@ def test_block_uses_same_fixture_and_nonce_and_records_lag(tmp_path: Path) -> No
         scheduler = ProbeScheduler(runner, database)
         try:
             past = datetime.now(UTC) - timedelta(seconds=20)
-            await scheduler.run_block(ProbeKind.EXPERIENCE_SHORT, 1, 4, past)
+            await scheduler.run_block("agent-1k-a", 4, past)
             assert len(calls) == 9
             assert len({call["fixture_id"] for call in calls}) == 1
-            assert len({call["prompt"] for call in calls}) == 1
+            assert (
+                len({call["prompt_data"]["messages"][-1]["content"] for call in calls})
+                == 1
+            )
             assert len({call["block_id"] for call in calls}) == 1
             assert len({call["deployment"] for call in calls}) == 9
             block = (await database.query("SELECT * FROM collection_blocks"))[0]
@@ -396,7 +437,7 @@ def test_block_uses_same_fixture_and_nonce_and_records_lag(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
-def test_standard_budget_blocks_but_rapid_has_no_automatic_limit(
+def test_daily_budget_applies_to_standard_and_rapid_modes(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
@@ -413,17 +454,21 @@ def test_standard_budget_blocks_but_rapid_has_no_automatic_limit(
         )
         deployment = catalog.deployments[0]
         try:
+            today = datetime.now(UTC).date().isoformat()
             await database.write(
                 """
-                INSERT INTO budget_usage(
-                    deployment_id, budget_date, short_requests,
-                    context_requests, output_tokens
-                    ) VALUES (?, ?, 3, 0, 0)
+                INSERT INTO budget_ledger(
+                    deployment_id, budget_date, requests_settled
+                ) VALUES (?, ?, 3)
                 """,
-                (deployment.deployment_id, datetime.now(UTC).date().isoformat()),
+                (deployment.deployment_id, today),
             )
+            fid, payload_data = fixture_prompt("agent-1k-a", "test")
             result = await runner.generation(
-                deployment, ProbeKind.EXPERIENCE_SHORT, prompt="test"
+                deployment,
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload_data,
             )
             assert result.outcome == ProbeOutcome.SKIPPED
             assert result.error_code == "daily_response_budget"
@@ -441,12 +486,36 @@ def test_standard_budget_blocks_but_rapid_has_no_automatic_limit(
             "rapid",
         )
         try:
-            allowed, reason = await rapid_runner._standard_budget_available(
-                deployment, ProbeKind.EXPERIENCE_SHORT, 1
+            today = datetime.now(UTC).date().isoformat()
+            await rapid_database.write(
+                """
+                INSERT INTO budget_ledger(
+                    deployment_id, budget_date, requests_settled
+                ) VALUES (?, ?, 3)
+                """,
+                (deployment.deployment_id, today),
             )
-            assert allowed is True
-            assert reason is None
+            fid, payload_data = fixture_prompt("agent-1k-a", "test")
+            result = await rapid_runner.generation(
+                deployment,
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload_data,
+                force=True,
+            )
+            assert result.outcome == ProbeOutcome.SKIPPED
+            assert result.error_code == "daily_response_budget"
         finally:
             await close_database(rapid_database, rapid_writer)
 
     asyncio.run(scenario())
+
+
+def test_six_block_fixture_rotation_is_strict(tmp_path: Path) -> None:
+    """Verify block 0→agent-1k-a, 1→agent-16k-a, ..., 5→agent-64k-b."""
+    from maas_observatory.probes import _FIXTURE_ORDER
+
+    assert _FIXTURE_ORDER == FIXTURE_IDS
+    for i in range(12):
+        expected = FIXTURE_IDS[i % 6]
+        assert _FIXTURE_ORDER[i % 6] == expected
