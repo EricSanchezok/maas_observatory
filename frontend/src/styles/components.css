@@ -1114,7 +1114,7 @@
 
 .sampling-status {
   display: grid;
-  grid-template-columns: repeat(4, minmax(90px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1134,6 +1134,7 @@
 .sampling-status span {
   color: var(--muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .sampling-status strong {
