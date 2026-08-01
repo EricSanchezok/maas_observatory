@@ -248,7 +248,7 @@ class ProbeRunner:
         self.collection_mode = collection_mode
         self._client = client
         self._owns_client = client is None
-        self.inference_lock = asyncio.Lock()
+        self._inference_locks: dict[str, asyncio.Lock] = {}
 
     async def __aenter__(self) -> ProbeRunner:
         if self._client is None:
@@ -264,6 +264,13 @@ class ProbeRunner:
             if alias_or_id in {deployment.alias, deployment.deployment_id}:
                 return deployment
         raise ValueError(f"unknown deployment: {alias_or_id}")
+
+    def _inference_lock(self, deployment_id: str) -> asyncio.Lock:
+        lock = self._inference_locks.get(deployment_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._inference_locks[deployment_id] = lock
+        return lock
 
     def profile_for(self, deployment: ModelDeployment) -> str:
         profile = self.profiles.get(deployment.alias)
@@ -423,13 +430,6 @@ class ProbeRunner:
                 block_id,
                 "maintenance",
             )
-        allowed, reason = await self._standard_budget_available(
-            deployment, kind, max_tokens
-        )
-        if not force and not allowed:
-            return await self._persist_skipped(
-                deployment, kind, scheduled, profile_id, fixture_id, block_id, reason
-            )
         try:
             operational_profile = self.profile_for(deployment)
         except ValueError:
@@ -443,7 +443,20 @@ class ProbeRunner:
                 "profile_undefined",
                 measurement=True,
             )
-        async with self.inference_lock:
+        async with self._inference_lock(deployment.deployment_id):
+            allowed, reason = await self._standard_budget_available(
+                deployment, kind, max_tokens
+            )
+            if not force and not allowed:
+                return await self._persist_skipped(
+                    deployment,
+                    kind,
+                    scheduled,
+                    profile_id,
+                    fixture_id,
+                    block_id,
+                    reason,
+                )
             await self._reserve_standard_budget(deployment, kind, max_tokens)
             return await self._stream_generation(
                 deployment,
@@ -757,7 +770,7 @@ class ProbeRunner:
 
 
 class ProbeScheduler:
-    """Persisted block scheduling with one global inference lock."""
+    """Persisted block scheduling with per-deployment inference locks."""
 
     def __init__(self, runner: ProbeRunner, database: Database) -> None:
         self.runner = runner
@@ -840,37 +853,24 @@ class ProbeScheduler:
                 lag,
             ),
         )
-        span = (
-            self.runner.settings.rapid_block_interval_seconds
-            if self.runner.collection_mode == "rapid"
-            else self.runner.settings.standard_block_interval_seconds
-        )
-        slot = span / len(deployments)
         status = "complete"
-        for index, deployment in enumerate(deployments):
+        if stop is not None and stop.is_set():
+            status = "interrupted"
+        else:
+            async with asyncio.TaskGroup() as tasks:
+                for deployment in deployments:
+                    tasks.create_task(
+                        self.runner.generation(
+                            deployment,
+                            kind,
+                            fixture_id=fixture_id,
+                            prompt=prompt,
+                            block_id=block_id,
+                            scheduled_at=scheduled_at,
+                        )
+                    )
             if stop is not None and stop.is_set():
                 status = "interrupted"
-                break
-            slot_at = scheduled_at + timedelta(seconds=slot * index)
-            delay = (slot_at - datetime.now(UTC)).total_seconds()
-            if delay > 0:
-                try:
-                    if stop is None:
-                        await asyncio.sleep(delay)
-                    else:
-                        await asyncio.wait_for(stop.wait(), timeout=delay)
-                        status = "interrupted"
-                        break
-                except TimeoutError:
-                    pass
-            await self.runner.generation(
-                deployment,
-                kind,
-                fixture_id=fixture_id,
-                prompt=prompt,
-                block_id=block_id,
-                scheduled_at=slot_at,
-            )
         await self.database.write(
             """
             UPDATE collection_blocks SET finished_at=?, status=?
