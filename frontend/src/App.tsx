@@ -3,7 +3,7 @@ import {
   WarningCircle
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { BrandMark } from "./components/common";
+import { BrandMark, WindowControl } from "./components/common";
 import { EventsSection } from "./components/EventsSection";
 import { FleetOverview } from "./components/FleetOverview";
 import { ModelDetail } from "./components/ModelDetail";
@@ -80,10 +80,16 @@ function App() {
 
       <main>
         <section className="masthead" id="overview">
-          <div className="masthead-title">
-            <h1>
-              MaaS <span>Observatory</span>
-            </h1>
+          <div className="masthead-top">
+            <div className="masthead-title">
+              <h1>
+                MaaS <span>Observatory</span>
+              </h1>
+            </div>
+            <div className="masthead-window">
+              <span className="masthead-window-label">DATA WINDOW</span>
+              <WindowControl value={dataWindow} onChange={setDataWindow} />
+            </div>
           </div>
           <div className="status-rail">
             <div>
@@ -121,7 +127,6 @@ function App() {
             selectedId={selectedId}
             onSelectedIdChange={setSelectedId}
             dataWindow={dataWindow}
-            onDataWindowChange={setDataWindow}
             responseSeries={responseSeries}
             loading={seriesLoading}
           />

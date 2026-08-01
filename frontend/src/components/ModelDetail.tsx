@@ -16,8 +16,7 @@ import {
   MetricTile,
   Reveal,
   SectionHeading,
-  StatePill,
-  WindowControl
+  StatePill
 } from "./common";
 import { latencyFormatter, MetricLineChart } from "./charts";
 
@@ -103,7 +102,6 @@ export function ModelDetail({
   selectedId,
   onSelectedIdChange,
   dataWindow,
-  onDataWindowChange,
   responseSeries,
   loading
 }: {
@@ -112,7 +110,6 @@ export function ModelDetail({
   selectedId: string;
   onSelectedIdChange: (deploymentId: string) => void;
   dataWindow: WindowOption;
-  onDataWindowChange: (window: WindowOption) => void;
   responseSeries: MetricSeries;
   loading: boolean;
 }) {
@@ -142,7 +139,6 @@ export function ModelDetail({
             />
             <div className="detail-toolbar-meta">
               <StatePill state={selected.response_state} />
-              <WindowControl value={dataWindow} onChange={onDataWindowChange} />
             </div>
           </div>
 
