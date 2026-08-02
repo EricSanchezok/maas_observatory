@@ -702,8 +702,6 @@ class ProbeRunner:
                     error_class, error_code = ErrorClass.SERVICE, "empty_visible_output"
                 elif reason == "unexpected_tool_call":
                     error_class, error_code = ErrorClass.SERVICE, "unexpected_tool_call"
-                elif reason == "prompt_deviation":
-                    error_class, error_code = ErrorClass.MEASUREMENT, "prompt_deviation"
                 else:
                     error_class, error_code = classify_error(exc)
             elif isinstance(exc, TimeoutError):
@@ -718,17 +716,14 @@ class ProbeRunner:
             else:
                 error_class, error_code = classify_error(exc)
 
-        # Prompt token deviation check
-        if (
-            outcome == ProbeOutcome.SUCCESS
-            and ref_prompt_tokens > 0
-            and prompt_tokens is not None
-        ):
+        prompt_token_deviation_pct: float | None = None
+        prompt_token_quality = "unavailable"
+        if ref_prompt_tokens > 0 and prompt_tokens is not None and prompt_tokens > 0:
             deviation = abs(prompt_tokens - ref_prompt_tokens) / ref_prompt_tokens
-            if deviation > 0.15:
-                outcome = ProbeOutcome.FAILED
-                error_class = ErrorClass.MEASUREMENT
-                error_code = "prompt_deviation"
+            prompt_token_deviation_pct = deviation * 100
+            prompt_token_quality = (
+                "reference_mismatch" if deviation > 0.15 else "reported"
+            )
 
         gaps = [current - previous for previous, current in pairwise(event_times)]
         output_speed: float | None = None
@@ -770,6 +765,8 @@ class ProbeRunner:
             "reported_completion_tokens": completion_tokens,
             "reported_prompt_tokens": prompt_tokens,
             "ref_prompt_tokens": ref_prompt_tokens or None,
+            "prompt_token_deviation_pct": prompt_token_deviation_pct,
+            "prompt_token_quality": prompt_token_quality,
             "configured_output_tokens": max_tokens,
             "time_to_headers_seconds": (
                 headers_clock - request_clock if headers_clock is not None else None
@@ -856,6 +853,7 @@ class ProbeRunner:
             "reported_completion_tokens": "tokens",
             "reported_prompt_tokens": "tokens",
             "ref_prompt_tokens": "tokens",
+            "prompt_token_deviation_pct": "%",
             "configured_output_tokens": "tokens",
             "time_to_headers_seconds": "s",
             "first_token_seconds": "s",

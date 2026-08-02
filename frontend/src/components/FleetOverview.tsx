@@ -204,9 +204,7 @@ export function FleetOverview({
 
                 {CONTEXT_TIERS.map((tier) => {
                   const t = model.tiers[tier];
-                  const attemptFailed =
-                    t.latest_attempt_outcome !== null &&
-                    t.latest_attempt_outcome !== "success";
+                  const attemptFailed = t.latest_attempt_outcome === "failed";
                   const reasoningLabel = model.reasoning_enabled
                     ? "First token (incl. reasoning)"
                     : "First token";
@@ -251,6 +249,11 @@ export function FleetOverview({
                       {attemptFailed && (
                         <div className="fleet-tier-failure" role="status">
                           Latest attempt failed
+                        </div>
+                      )}
+                      {t.prompt_token_quality === "reference_mismatch" && (
+                        <div className="fleet-tier-quality" role="status">
+                          Tokenizer differs from reference
                         </div>
                       )}
                     </div>

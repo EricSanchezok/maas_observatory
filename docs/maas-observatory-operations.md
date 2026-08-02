@@ -74,6 +74,11 @@ If streaming usage is absent, Output speed is unavailable. A successfully
 completed response still counts as a successful path check. Characters and SSE
 chunks are never used as token estimates.
 
+Reported prompt-token counts are compared with the fixed fixture reference to
+describe measurement comparability. A difference above 15% is shown as a
+tokenizer mismatch, not a service failure, and the successful response remains
+part of latency and throughput summaries.
+
 `response-suite-v5` contains six deterministic Agent fixtures at three context
 tiers (1K, 16K, 64K) with two variants each, in one balanced response profile.
 The repository stores fixture definitions and payload digests, but the database,

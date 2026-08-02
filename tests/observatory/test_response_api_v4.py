@@ -450,7 +450,7 @@ def test_measurement_limit_does_not_reduce_path_success(tmp_path: Path) -> None:
             fixture_id="agent-1k-b",
             outcome="failed",
             error_class="measurement_error",
-            error_code="prompt_deviation",
+            error_code="streaming_usage_missing",
         )
         await close_database(database, writer)
         return settings, catalog, database
@@ -535,3 +535,104 @@ def test_generation_failure_visible_in_tier_latest_attempt(
             assert item["tiers"][tier]["latest_attempt_reason"] == (
                 "first_check_scheduled"
             )
+
+
+def test_prompt_deviation_preserves_measurements_in_tier_stats(
+    tmp_path: Path,
+) -> None:
+    """Prompt deviation probes must contribute measurements to tier p50/p95.
+
+    After the fix, prompt deviation is a measurement metadata field
+    (prompt_token_deviation_pct / prompt_token_quality), not an outcome
+    flip.  Both probes should count as successful path attempts and feed
+    into per-tier statistics.
+    """
+
+    async def seed() -> tuple[object, object, object]:
+        settings = make_settings(tmp_path)
+        catalog = configured_catalog()
+        database, writer = await open_database(settings, catalog)
+        deployment_id = catalog.deployments[0].deployment_id
+        await insert_probe(
+            database,
+            deployment_id,
+            kind="experience",
+            context_tier="1k",
+            fixture_id="agent-1k-a",
+            outcome="success",
+            measurement={
+                "first_response_seconds": 0.5,
+                "first_token_seconds": 0.3,
+                "total_response_seconds": 2.1,
+                "output_speed_tps": 15.0,
+                "reported_prompt_tokens": 1000,
+                "ref_prompt_tokens": 1000,
+                "reported_completion_tokens": 8,
+                "prompt_token_deviation_pct": 0.0,
+                "prompt_token_quality": "reported",
+            },
+        )
+        await insert_probe(
+            database,
+            deployment_id,
+            kind="experience",
+            context_tier="1k",
+            fixture_id="agent-1k-b",
+            outcome="success",
+            measurement={
+                "first_response_seconds": 0.6,
+                "first_token_seconds": 0.4,
+                "total_response_seconds": 2.3,
+                "output_speed_tps": 14.0,
+                "reported_prompt_tokens": 1200,
+                "ref_prompt_tokens": 1000,
+                "reported_completion_tokens": 8,
+                "prompt_token_deviation_pct": 20.0,
+                "prompt_token_quality": "reference_mismatch",
+            },
+        )
+        await close_database(database, writer)
+        return settings, catalog, database
+
+    settings, catalog, database = asyncio.run(seed())
+    app = create_app(
+        database, catalog, settings, RuntimeHealth(), frontend_dir=tmp_path
+    )
+    deployment_id = catalog.deployments[0].deployment_id
+    with TestClient(app) as client:
+        item = next(
+            row
+            for row in client.get("/api/v1/experience/overview").json()["data"]
+            if row["deployment_id"] == deployment_id
+        )
+        # Both probes count as path attempts and successes
+        assert item["path_success_rate"] == 1.0
+
+        t1k = item["tiers"]["1k"]
+        # Both probes should contribute to aggregation
+        assert t1k["sample_count"] == 2
+        assert t1k["fixture_count"] == 2
+        assert t1k["complete_fixture_set"] is True
+        # Measurements from both probes in p50
+        assert t1k["first_token_p50"] is not None
+        assert t1k["first_response_p50"] is not None
+        assert t1k["total_response_p50"] is not None
+        assert t1k["output_speed_p50"] is not None
+        # Prompt token stats include both probes
+        assert t1k["reported_prompt_tokens_p50"] is not None
+        assert t1k["prompt_token_deviation_p50"] == 10.0
+        assert t1k["prompt_token_quality"] == "reference_mismatch"
+        # Latest attempt should be success, not failed
+        assert t1k["latest_attempt_outcome"] == "success"
+        assert t1k["latest"] is not None
+        assert t1k["latest_attempt_reason"] is None
+        # series endpoint also has both points
+        series = client.get(
+            f"/api/v1/deployments/{deployment_id}/experience/series"
+        ).json()["data"]
+        assert len(series["tiers"]["1k"]["points"]) == 2
+        latest_point = series["tiers"]["1k"]["points"][-1]
+        assert latest_point["quality"] == "exact"
+        assert latest_point["reason"] is None
+        assert latest_point["prompt_token_quality"] == "reference_mismatch"
+        assert latest_point["measurements"]["prompt_token_deviation_pct"] == 20.0

@@ -519,3 +519,131 @@ def test_six_block_fixture_rotation_is_strict(tmp_path: Path) -> None:
     for i in range(12):
         expected = FIXTURE_IDS[i % 6]
         assert _FIXTURE_ORDER[i % 6] == expected
+
+
+def test_prompt_deviation_preserves_success_and_measurements(
+    tmp_path: Path,
+) -> None:
+    """Prompt deviation >15% must not discard successful response measurements.
+
+    The server responded correctly — visible output present, no tool calls,
+    no transport errors.  Token count misalignment is a measurement
+    comparability concern, not a service failure.  The probe reports SUCCESS
+    and records the deviation in prompt_token_deviation_pct /
+    prompt_token_quality for downstream consumers.
+    """
+
+    async def scenario() -> None:
+        settings = make_settings(tmp_path)
+        catalog = configured_catalog()
+        database, writer = await open_database(settings, catalog)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={"data": [{"id": "model"}]},
+                    request=request,
+                )
+            # agent-1k-a has ref_prompt_tokens=1000; 1200 is 20% off → >15%
+            response = _sse_response(prompt_tokens=1200)
+            response.request = request
+            return response
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        runner = ProbeRunner(
+            catalog,
+            settings.probes,
+            settings.profiles,
+            database,
+            settings.experience,
+            settings.collection_mode,
+            client=client,
+        )
+        try:
+            fid, payload = fixture_prompt("agent-1k-a", "deviation-nonce")
+            result = await runner.generation(
+                catalog.deployments[0],
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload,
+                block_id="deviation-block",
+            )
+            # Outcome must remain SUCCESS — the response was valid
+            assert result.outcome == ProbeOutcome.SUCCESS
+            assert result.error_class == ErrorClass.NONE
+            assert result.error_code is None
+            # Deviation exposed as measurement metadata, not as error
+            assert result.measurements["prompt_token_deviation_pct"] == 20.0
+            assert result.measurements["prompt_token_quality"] == "reference_mismatch"
+            # Core streaming measurements preserved for tier aggregation
+            assert result.measurements["first_response_seconds"] is not None
+            assert result.measurements["first_token_seconds"] is not None
+            assert result.measurements["reported_prompt_tokens"] == 1200
+            assert result.measurements["ref_prompt_tokens"] == 1000
+            assert result.measurements["reported_completion_tokens"] == 8
+            assert result.measurements["output_speed_tps"] is not None
+            # Persisted row carries success outcome
+            rows = await database.query(
+                "SELECT outcome, error_class, error_code FROM probe_runs "
+                "WHERE kind='experience' AND fixture_id='agent-1k-a'"
+            )
+            assert len(rows) == 1
+            assert rows[0]["outcome"] == "success"
+            assert rows[0]["error_class"] == "none"
+            assert rows[0]["error_code"] is None
+        finally:
+            await client.aclose()
+            await close_database(database, writer)
+
+    asyncio.run(scenario())
+
+
+def test_prompt_within_tolerance_has_clean_quality(tmp_path: Path) -> None:
+    """Prompt token deviation ≤15% is recorded as 'reported' quality."""
+
+    async def scenario() -> None:
+        settings = make_settings(tmp_path)
+        catalog = configured_catalog()
+        database, writer = await open_database(settings, catalog)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={"data": [{"id": "model"}]},
+                    request=request,
+                )
+            # agent-1k-a has ref_prompt_tokens=1000; 1150 is 15% exactly → at boundary
+            response = _sse_response(prompt_tokens=1150)
+            response.request = request
+            return response
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        runner = ProbeRunner(
+            catalog,
+            settings.probes,
+            settings.profiles,
+            database,
+            settings.experience,
+            settings.collection_mode,
+            client=client,
+        )
+        try:
+            fid, payload = fixture_prompt("agent-1k-a", "within-tolerance")
+            result = await runner.generation(
+                catalog.deployments[0],
+                ProbeKind.EXPERIENCE,
+                fixture_id=fid,
+                prompt_data=payload,
+                block_id="tolerance-block",
+            )
+            assert result.outcome == ProbeOutcome.SUCCESS
+            assert result.measurements["prompt_token_deviation_pct"] == 15.0
+            assert result.measurements["prompt_token_quality"] == "reported"
+            assert result.measurements["reported_prompt_tokens"] == 1150
+        finally:
+            await client.aclose()
+            await close_database(database, writer)
+
+    asyncio.run(scenario())

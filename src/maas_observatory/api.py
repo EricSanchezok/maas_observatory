@@ -231,6 +231,18 @@ def _build_tier_experience(
         for _, m in successful
         if m.get("ref_prompt_tokens") is not None
     ]
+    prompt_token_deviations = [
+        float(m["prompt_token_deviation_pct"])
+        for _, m in successful
+        if m.get("prompt_token_deviation_pct") is not None
+    ]
+    prompt_token_quality = (
+        "reference_mismatch"
+        if any(
+            m.get("prompt_token_quality") == "reference_mismatch" for _, m in successful
+        )
+        else ("reported" if prompt_token_deviations else "unavailable")
+    )
 
     latest = successful[-1] if successful else None
     latest_attempt = attempts[-1] if attempts else None
@@ -250,6 +262,8 @@ def _build_tier_experience(
             "output_speed_tps": measurement.get("output_speed_tps"),
             "reported_prompt_tokens": measurement.get("reported_prompt_tokens"),
             "ref_prompt_tokens": measurement.get("ref_prompt_tokens"),
+            "prompt_token_deviation_pct": measurement.get("prompt_token_deviation_pct"),
+            "prompt_token_quality": measurement.get("prompt_token_quality"),
             "reported_completion_tokens": measurement.get("reported_completion_tokens"),
             "fixture_id": row["fixture_id"],
             "block_id": row["block_id"],
@@ -272,6 +286,8 @@ def _build_tier_experience(
         "reasoning_tokens_quality": reasoning_tokens_quality,
         "reported_prompt_tokens_p50": _p50(reported_prompt_tokens),
         "ref_prompt_tokens_p50": _p50(ref_prompt_tokens),
+        "prompt_token_deviation_p50": _p50(prompt_token_deviations),
+        "prompt_token_quality": prompt_token_quality,
         "latest": latest_payload,
         "latest_attempt_outcome": (
             latest_attempt["outcome"] if latest_attempt else None
@@ -569,6 +585,8 @@ def create_app(
                     "sample_count": exp["sample_count"],
                     "fixture_count": exp["fixture_count"],
                     "complete_fixture_set": exp["complete_fixture_set"],
+                    "prompt_token_deviation_p50": exp["prompt_token_deviation_p50"],
+                    "prompt_token_quality": exp["prompt_token_quality"],
                     "measured_at": (
                         exp["latest"]["measured_at"] if exp["latest"] else None
                     ),
@@ -657,6 +675,9 @@ def create_app(
                         "quality": (
                             "exact" if row["outcome"] == "success" else "unavailable"
                         ),
+                        "prompt_token_quality": measurements.get(
+                            "prompt_token_quality", "unavailable"
+                        ),
                         "reason": _attempt_reason(
                             row["outcome"],
                             row["error_class"],
@@ -696,6 +717,7 @@ def create_app(
                                 "reported_reasoning_tokens",
                                 "reasoning_tokens_estimated",
                                 "ref_prompt_tokens",
+                                "prompt_token_deviation_pct",
                                 "scheduler_lag_seconds",
                             )
                         },
@@ -778,6 +800,8 @@ def create_app(
                             "reasoning_tokens_quality": "unavailable",
                             "reported_prompt_tokens_p50": None,
                             "ref_prompt_tokens_p50": None,
+                            "prompt_token_deviation_p50": None,
+                            "prompt_token_quality": "unavailable",
                             "latest": None,
                             "latest_attempt_outcome": None,
                             "latest_attempt_error_class": None,
@@ -1064,9 +1088,9 @@ def create_app(
                         "reported usage takes precedence over estimates"
                     ),
                     "prompt_deviation_rule": (
-                        "prompt token deviation >15% from reference "
-                        "classifies as prompt_deviation; these samples "
-                        "never enter p50/p95"
+                        "prompt token deviation >15% from reference is recorded "
+                        "as a measurement quality signal; samples enter "
+                        "p50/p95 normally"
                     ),
                     "uptime_24h": (
                         "route success % over 24h; maintenance samples excluded"

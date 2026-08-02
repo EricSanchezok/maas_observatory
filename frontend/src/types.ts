@@ -46,6 +46,8 @@ export interface ResponseMeasurement {
   output_speed_tps: number | null;
   reported_prompt_tokens: number | null;
   ref_prompt_tokens: number | null;
+  prompt_token_deviation_pct: number | null;
+  prompt_token_quality: "reported" | "reference_mismatch" | "unavailable";
   reported_completion_tokens: number | null;
   fixture_id: string;
   block_id: string;
@@ -70,6 +72,8 @@ export interface TierExperience {
   reasoning_tokens_quality: "reported" | "estimated" | "unavailable";
   reported_prompt_tokens_p50: number | null;
   ref_prompt_tokens_p50: number | null;
+  prompt_token_deviation_p50: number | null;
+  prompt_token_quality: "reported" | "reference_mismatch" | "unavailable";
   latest: ResponseMeasurement | null;
   latest_attempt_outcome: "success" | "failed" | "skipped" | null;
   latest_attempt_error_class: string | null;
@@ -108,6 +112,7 @@ export interface ExperienceSeriesPoint {
   timestamp: string;
   quality: Quality;
   reason: string | null;
+  prompt_token_quality: "reported" | "reference_mismatch" | "unavailable";
   profile_id: string;
   definition_version: string;
   suite_version: string;
@@ -152,6 +157,8 @@ export interface TierCompareData {
   fixture_count: number;
   complete_fixture_set: boolean;
   measured_at: string | null;
+  prompt_token_deviation_p50: number | null;
+  prompt_token_quality: "reported" | "reference_mismatch" | "unavailable";
   latest_attempt_outcome: "success" | "failed" | "skipped" | null;
   latest_attempt_reason: string | null;
   latest_attempt_at: string | null;

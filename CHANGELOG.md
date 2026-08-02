@@ -6,6 +6,11 @@ public data formats.
 
 ## Unreleased
 
+- Treat prompt-token differences from the fixed reference tokenizer as a
+  measurement quality signal instead of a failed request. Successful responses
+  now remain in latency and throughput aggregates, with tokenizer mismatch
+  quality exposed through the API and interface.
+
 ## 0.6.0 - 2026-08-01
 
 - Add three-tier Agent context observability (1K / 16K / 64K) with all tiers

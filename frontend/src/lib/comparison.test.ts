@@ -26,6 +26,8 @@ function makeTierCompareData(metrics: {
     first_token_p50: metrics.first_token_p50 ?? null,
     output_speed_p50: metrics.output_speed_p50 ?? null,
     total_response_p50: metrics.total_response_p50 ?? null,
+    prompt_token_deviation_p50: null,
+    prompt_token_quality: "reported",
     quality: hasAll ? "exact" : "unavailable",
     sample_count: hasAll ? 6 : 0,
     fixture_count: hasAll ? 2 : 0,
