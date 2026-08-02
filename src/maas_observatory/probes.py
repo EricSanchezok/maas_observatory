@@ -94,7 +94,7 @@ def fixture_hashes() -> dict[str, str]:
 
 
 def profile_definitions(
-    settings: ExperienceSettings, probes: ProbeSettings
+    settings: ExperienceSettings,
 ) -> list[dict[str, Any]]:
     hashes = fixture_hashes()
     meta = all_metadata()
@@ -110,7 +110,6 @@ def profile_definitions(
                 {
                     "fixture_id": fid,
                     "context_tier": meta[fid]["context_tier"],
-                    "configured_max_output_tokens": probes.experience_max_output_tokens,
                     "target_input_tokens": meta[fid]["target_input_tokens"],
                     "ref_prompt_tokens": meta[fid]["ref_prompt_tokens"],
                     "payload_bytes": meta[fid]["payload_bytes"],
@@ -302,111 +301,6 @@ class ProbeRunner:
             )
         )
 
-    async def _ledger_row(self, deployment_id: str) -> dict[str, int]:
-        today = datetime.now(UTC).date().isoformat()
-        rows = await self.database.query(
-            """
-            SELECT * FROM budget_ledger
-            WHERE deployment_id=? AND budget_date=?
-            """,
-            (deployment_id, today),
-        )
-        if rows:
-            r = rows[0]
-            return {
-                "requests_reserved": int(r["requests_reserved"]),
-                "requests_settled": int(r["requests_settled"]),
-                "input_tokens_reserved": int(r["input_tokens_reserved"]),
-                "input_tokens_settled": int(r["input_tokens_settled"]),
-                "output_tokens_reserved": int(r["output_tokens_reserved"]),
-                "output_tokens_settled": int(r["output_tokens_settled"]),
-            }
-        return {
-            "requests_reserved": 0,
-            "requests_settled": 0,
-            "input_tokens_reserved": 0,
-            "input_tokens_settled": 0,
-            "output_tokens_reserved": 0,
-            "output_tokens_settled": 0,
-        }
-
-    async def _budget_available(
-        self, deployment: ModelDeployment, ref_prompt_tokens: int, max_tokens: int
-    ) -> tuple[bool, str | None]:
-        ledger = await self._ledger_row(deployment.deployment_id)
-        budget = self.settings.daily_budget
-        if ledger["requests_reserved"] + ledger["requests_settled"] >= budget.requests:
-            return False, "daily_response_budget"
-        if (
-            ledger["input_tokens_reserved"]
-            + ledger["input_tokens_settled"]
-            + ref_prompt_tokens
-            > budget.input_tokens
-        ):
-            return False, "daily_input_token_budget"
-        if (
-            ledger["output_tokens_reserved"]
-            + ledger["output_tokens_settled"]
-            + max_tokens
-            > budget.output_tokens
-        ):
-            return False, "daily_output_token_budget"
-        return True, None
-
-    async def _reserve_budget(
-        self, deployment: ModelDeployment, ref_prompt_tokens: int, max_tokens: int
-    ) -> None:
-        today = datetime.now(UTC).date().isoformat()
-        await self.database.write(
-            """
-            INSERT INTO budget_ledger(
-                deployment_id, budget_date, requests_reserved,
-                input_tokens_reserved, output_tokens_reserved
-            ) VALUES (?, ?, 1, ?, ?)
-            ON CONFLICT(deployment_id, budget_date) DO UPDATE SET
-                requests_reserved=requests_reserved+1,
-                input_tokens_reserved=input_tokens_reserved+excluded.input_tokens_reserved,
-                output_tokens_reserved=output_tokens_reserved+excluded.output_tokens_reserved
-            """,
-            (deployment.deployment_id, today, ref_prompt_tokens, max_tokens),
-        )
-
-    async def _settle_budget(
-        self,
-        deployment: ModelDeployment,
-        ref_prompt_tokens: int,
-        max_tokens: int,
-        actual_prompt: int | None,
-        actual_completion: int | None,
-    ) -> None:
-        today = datetime.now(UTC).date().isoformat()
-        input_settled = (
-            actual_prompt if actual_prompt is not None else ref_prompt_tokens
-        )
-        output_settled = (
-            actual_completion if actual_completion is not None else max_tokens
-        )
-        await self.database.write(
-            """
-            UPDATE budget_ledger SET
-                requests_reserved=MAX(0, requests_reserved-1),
-                requests_settled=requests_settled+1,
-                input_tokens_reserved=MAX(0, input_tokens_reserved-?),
-                input_tokens_settled=input_tokens_settled+?,
-                output_tokens_reserved=MAX(0, output_tokens_reserved-?),
-                output_tokens_settled=output_tokens_settled+?
-            WHERE deployment_id=? AND budget_date=?
-            """,
-            (
-                ref_prompt_tokens,
-                input_settled,
-                max_tokens,
-                output_settled,
-                deployment.deployment_id,
-                today,
-            ),
-        )
-
     async def generation(
         self,
         deployment: ModelDeployment,
@@ -437,7 +331,7 @@ class ProbeRunner:
             if prompt_data is None:
                 raise ValueError("experience probes require prompt_data")
             profile_id = self.experience.response_profile_id
-            max_tokens = self.settings.experience_max_output_tokens
+            max_tokens = deployment.output_limit
             selected_prompt = prompt_data["messages"][-1]["content"]
             payload = prompt_data
             if fixture_id is not None:
@@ -470,22 +364,6 @@ class ProbeRunner:
                 measurement=True,
             )
         async with self._inference_lock(deployment.deployment_id):
-            if kind == ProbeKind.EXPERIENCE:
-                allowed, reason = await self._budget_available(
-                    deployment, ref_prompt_tokens, max_tokens
-                )
-                if not allowed:
-                    return await self._persist_skipped(
-                        deployment,
-                        kind,
-                        scheduled,
-                        profile_id,
-                        fixture_id,
-                        block_id,
-                        context_tier,
-                        reason,
-                    )
-                await self._reserve_budget(deployment, ref_prompt_tokens, max_tokens)
             return await self._stream_generation(
                 deployment,
                 kind,
@@ -741,16 +619,6 @@ class ProbeRunner:
                 "streaming_usage_missing"
                 if completion_tokens is None
                 else "insufficient_token_events"
-            )
-
-        # Settle budget with actual usage
-        if kind == ProbeKind.EXPERIENCE and ref_prompt_tokens > 0:
-            await self._settle_budget(
-                deployment,
-                ref_prompt_tokens,
-                max_tokens,
-                prompt_tokens,
-                completion_tokens,
             )
 
         # first_token_seconds = stream_start_seconds (reasoning-inclusive)

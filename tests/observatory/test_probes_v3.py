@@ -112,10 +112,11 @@ def test_fixture_prompt_and_balanced_order() -> None:
     }
 
     settings = make_settings(Path("/tmp"))
-    definitions = profile_definitions(settings.experience, settings.probes)
+    definitions = profile_definitions(settings.experience)
     assert {item["kind"] for item in definitions} == {"agent_response"}
     assert len(definitions[0]["fixtures"]) == 6
     assert definitions[0]["fixtures"][0]["fixture_id"] == "agent-1k-a"
+    assert "configured_max_output_tokens" not in definitions[0]["fixtures"][0]
 
 
 def test_error_classification() -> None:
@@ -159,6 +160,8 @@ def test_streaming_measurements_use_visible_content_and_reported_usage(
         catalog = configured_catalog()
         database, writer = await open_database(settings, catalog)
 
+        requested_max_tokens: list[int] = []
+
         def handler(request: httpx.Request) -> httpx.Response:
             if request.method == "GET":
                 return httpx.Response(
@@ -166,6 +169,7 @@ def test_streaming_measurements_use_visible_content_and_reported_usage(
                     json={"data": [{"id": "model"}]},
                     request=request,
                 )
+            requested_max_tokens.append(json.loads(request.content)["max_tokens"])
             response = _sse_response()
             response.request = request
             return response
@@ -204,6 +208,11 @@ def test_streaming_measurements_use_visible_content_and_reported_usage(
             assert result.measurements["reasoning_tokens_estimated"] == 2
             assert result.measurements["ref_prompt_tokens"] is not None
             assert result.measurements["ref_prompt_tokens"] > 0
+            assert requested_max_tokens == [deployment.output_limit]
+            assert (
+                result.measurements["configured_output_tokens"]
+                == deployment.output_limit
+            )
             rows = await database.query(
                 "SELECT measurement_json FROM probe_runs WHERE kind='experience'"
             )
@@ -433,80 +442,6 @@ def test_block_uses_same_fixture_and_nonce_and_records_lag(tmp_path: Path) -> No
             assert block["scheduler_lag_seconds"] >= 19
         finally:
             await close_database(database, writer)
-
-    asyncio.run(scenario())
-
-
-def test_daily_budget_applies_to_standard_and_rapid_modes(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> None:
-        catalog = configured_catalog()
-        standard = make_settings(tmp_path / "standard", mode="standard")
-        database, writer = await open_database(standard, catalog)
-        runner = ProbeRunner(
-            catalog,
-            standard.probes,
-            standard.profiles,
-            database,
-            standard.experience,
-            "standard",
-        )
-        deployment = catalog.deployments[0]
-        try:
-            today = datetime.now(UTC).date().isoformat()
-            await database.write(
-                """
-                INSERT INTO budget_ledger(
-                    deployment_id, budget_date, requests_settled
-                ) VALUES (?, ?, 3)
-                """,
-                (deployment.deployment_id, today),
-            )
-            fid, payload_data = fixture_prompt("agent-1k-a", "test")
-            result = await runner.generation(
-                deployment,
-                ProbeKind.EXPERIENCE,
-                fixture_id=fid,
-                prompt_data=payload_data,
-            )
-            assert result.outcome == ProbeOutcome.SKIPPED
-            assert result.error_code == "daily_response_budget"
-        finally:
-            await close_database(database, writer)
-
-        rapid = make_settings(tmp_path / "rapid", mode="rapid")
-        rapid_database, rapid_writer = await open_database(rapid, catalog)
-        rapid_runner = ProbeRunner(
-            catalog,
-            rapid.probes,
-            rapid.profiles,
-            rapid_database,
-            rapid.experience,
-            "rapid",
-        )
-        try:
-            today = datetime.now(UTC).date().isoformat()
-            await rapid_database.write(
-                """
-                INSERT INTO budget_ledger(
-                    deployment_id, budget_date, requests_settled
-                ) VALUES (?, ?, 3)
-                """,
-                (deployment.deployment_id, today),
-            )
-            fid, payload_data = fixture_prompt("agent-1k-a", "test")
-            result = await rapid_runner.generation(
-                deployment,
-                ProbeKind.EXPERIENCE,
-                fixture_id=fid,
-                prompt_data=payload_data,
-                force=True,
-            )
-            assert result.outcome == ProbeOutcome.SKIPPED
-            assert result.error_code == "daily_response_budget"
-        finally:
-            await close_database(rapid_database, rapid_writer)
 
     asyncio.run(scenario())
 

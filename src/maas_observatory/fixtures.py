@@ -10,6 +10,8 @@ from typing import Any, cast
 
 from maas_observatory.models import ContextTier
 
+# Fixture resource versions track immutable payload content independently from
+# the Observatory response-suite version, which tracks measurement policy.
 _RESOURCE_PATH = "resources/agent_fixtures_v5.json"
 
 

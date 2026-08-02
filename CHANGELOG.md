@@ -9,7 +9,12 @@ public data formats.
 - Treat prompt-token differences from the fixed reference tokenizer as a
   measurement quality signal instead of a failed request. Successful responses
   now remain in latency and throughput aggregates, with tokenizer mismatch
-  quality exposed through the API and interface.
+  quality retained in the API for diagnostics but omitted from the main UI.
+- Remove Observatory request and token budgets for internal deployments. Agent
+  response probes now use each deployment's catalog `output_limit`; config and
+  database schemas move to v5, the public API to v7, and the response suite to
+  v6. Schema v5 removes the obsolete budget ledger while preserving response
+  history through online v3/v4 migration.
 
 ## 0.6.0 - 2026-08-01
 

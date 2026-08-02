@@ -17,9 +17,9 @@ import aiosqlite
 from maas_common.catalog import ModelCatalog
 from maas_observatory.settings import StorageSettings
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
-SCHEMA_4 = """
+SCHEMA_5 = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
@@ -125,17 +125,6 @@ CREATE TABLE IF NOT EXISTS collection_blocks (
     scheduler_lag_seconds REAL NOT NULL,
     status TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS budget_ledger (
-    deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
-    budget_date TEXT NOT NULL,
-    requests_reserved INTEGER NOT NULL DEFAULT 0,
-    requests_settled INTEGER NOT NULL DEFAULT 0,
-    input_tokens_reserved INTEGER NOT NULL DEFAULT 0,
-    input_tokens_settled INTEGER NOT NULL DEFAULT 0,
-    output_tokens_reserved INTEGER NOT NULL DEFAULT 0,
-    output_tokens_settled INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY(deployment_id, budget_date)
-);
 CREATE TABLE IF NOT EXISTS experience_profiles (
     profile_id TEXT NOT NULL,
     definition_version TEXT NOT NULL,
@@ -154,20 +143,14 @@ CREATE TABLE IF NOT EXISTS collection_epochs (
 );
 """
 
-MIGRATE_3_TO_4 = """
+MIGRATE_3_TO_5 = """
 ALTER TABLE probe_runs ADD COLUMN context_tier TEXT;
 DROP TABLE IF EXISTS budget_usage;
-CREATE TABLE budget_ledger (
-    deployment_id TEXT NOT NULL REFERENCES deployments(deployment_id),
-    budget_date TEXT NOT NULL,
-    requests_reserved INTEGER NOT NULL DEFAULT 0,
-    requests_settled INTEGER NOT NULL DEFAULT 0,
-    input_tokens_reserved INTEGER NOT NULL DEFAULT 0,
-    input_tokens_settled INTEGER NOT NULL DEFAULT 0,
-    output_tokens_reserved INTEGER NOT NULL DEFAULT 0,
-    output_tokens_settled INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY(deployment_id, budget_date)
-);
+"""
+
+
+MIGRATE_4_TO_5 = """
+DROP TABLE IF EXISTS budget_ledger;
 """
 
 
@@ -221,7 +204,7 @@ class Database:
         self,
         *,
         collection_mode: str = "standard",
-        suite_version: str = "response-suite-v5",
+        suite_version: str = "response-suite-v6",
     ) -> None:
         self.prepare_directories()
         version = await self._schema_version()
@@ -229,25 +212,28 @@ class Database:
             raise RuntimeError(
                 f"database schema {version} is newer than supported {SCHEMA_VERSION}"
             )
-        if version == 1:
-            raise RuntimeError("schema v1 is unsupported; reset to response-suite-v5")
-        if version == 2:
-            await self.backup()
-        if version == 3:
+        if version in (1, 2):
+            raise RuntimeError(
+                "schema v1/v2 is unsupported; reset to response-suite-v6"
+            )
+        if version in (3, 4):
             await self.backup()
         connection = await aiosqlite.connect(self.path)
         try:
             await self._configure(connection)
             await connection.execute("PRAGMA journal_mode=WAL")
             await connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
-            if version in (0, 2):
-                await connection.executescript(SCHEMA_4)
+            if version == 0:
+                await connection.executescript(SCHEMA_5)
             elif version == 3:
-                await connection.executescript(MIGRATE_3_TO_4)
-            if version < 4:
+                await connection.executescript(MIGRATE_3_TO_5)
+            elif version == 4:
+                await connection.executescript(MIGRATE_4_TO_5)
+            await connection.executescript(SCHEMA_5)
+            if version < 5:
                 await connection.execute(
                     "INSERT OR REPLACE INTO schema_migrations(version, applied_at) "
-                    "VALUES (4, ?)",
+                    "VALUES (5, ?)",
                     (isoformat(),),
                 )
                 await connection.execute(
@@ -255,11 +241,11 @@ class Database:
                     INSERT INTO collection_epochs(
                         schema_version, started_at, reason,
                         collection_mode, suite_version
-                    ) VALUES (4, ?, 'response-suite-v5', ?, ?)
+                    ) VALUES (5, ?, 'response-suite-v6', ?, ?)
                     """,
                     (isoformat(), collection_mode, suite_version),
                 )
-                await connection.execute("PRAGMA user_version=4")
+                await connection.execute("PRAGMA user_version=5")
             await connection.commit()
         finally:
             await connection.close()
@@ -419,9 +405,9 @@ class Database:
                 tuple(active_ids),
             )
 
-    def reset_v4(self, confirmation: str) -> None:
-        if confirmation != "response-suite-v5":
-            raise ValueError("confirmation must be exactly response-suite-v5")
+    def reset_v5(self, confirmation: str) -> None:
+        if confirmation != "response-suite-v6":
+            raise ValueError("confirmation must be exactly response-suite-v6")
         for path in (
             self.path,
             self.path.with_name(f"{self.path.name}-wal"),

@@ -275,14 +275,6 @@
   font-size: 11px;
 }
 
-.fleet-tier-quality {
-  padding: 4px 7px;
-  margin-top: var(--space-1);
-  color: var(--amber);
-  border: 1px solid rgba(231, 185, 120, 0.22);
-  border-radius: 4px;
-  font-size: 11px;
-}
 
 /* ───── Daily uptime bars ───── */
 

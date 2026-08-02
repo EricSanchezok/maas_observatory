@@ -127,7 +127,7 @@ async def serve(
             await database.wait_writer()
             await database.recover_incomplete_blocks()
             await database.synchronize_catalog(catalog)
-            for definition in profile_definitions(settings.experience, settings.probes):
+            for definition in profile_definitions(settings.experience):
                 fixture_digest = hashlib.sha256(
                     json.dumps(definition["fixtures"], sort_keys=True).encode()
                 ).hexdigest()
@@ -149,7 +149,7 @@ async def serve(
             health.ready = True
             health.detail = "ready"
             LOGGER.info(
-                "collection mode=%s; daily request/input/output budgets enabled",
+                "collection mode=%s; per-deployment output limits from catalog",
                 settings.collection_mode,
             )
             async with asyncio.TaskGroup() as tasks:

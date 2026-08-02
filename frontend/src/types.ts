@@ -17,7 +17,7 @@ export const TIER_LABELS: Record<ContextTier, string> = {
 };
 
 export interface Envelope<T> {
-  schema_version: "6";
+  schema_version: "7";
   generated_at: string;
   data_window: string;
   freshness_seconds: number | null;

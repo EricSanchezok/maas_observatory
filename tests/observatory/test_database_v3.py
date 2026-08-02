@@ -25,7 +25,7 @@ def test_settings_environment_mode_and_validation(
     config = tmp_path / "observability.yaml"
     config.write_text(
         """
-schema_version: 4
+schema_version: 5
 collection_mode: standard
 profiles: {sample: default-only}
 """,
@@ -53,7 +53,7 @@ profiles: {sample: default-only}
         load_observability_settings(tmp_path / "missing.yaml")
 
 
-def test_schema_v4_contains_only_active_response_tables(tmp_path: Path) -> None:
+def test_schema_v5_contains_only_active_response_tables(tmp_path: Path) -> None:
     async def scenario() -> None:
         settings = make_settings(tmp_path)
         catalog = configured_catalog()
@@ -73,7 +73,6 @@ def test_schema_v4_contains_only_active_response_tables(tmp_path: Path) -> None:
                 "current_states",
                 "collection_blocks",
                 "experience_profiles",
-                "budget_ledger",
             } <= names
             assert {
                 "scrape_snapshots",
@@ -81,6 +80,7 @@ def test_schema_v4_contains_only_active_response_tables(tmp_path: Path) -> None:
                 "rollups",
                 "metrics_sources",
                 "budget_usage",
+                "budget_ledger",
             }.isdisjoint(names)
             assert len(await database.query("SELECT * FROM deployments")) == 9
             await database.write(
@@ -90,7 +90,7 @@ def test_schema_v4_contains_only_active_response_tables(tmp_path: Path) -> None:
                     scheduled_at, started_at, order_json,
                     scheduler_lag_seconds, status
                 ) VALUES (
-                    'stale', 'response-v5', 'agent-1k-a', 'rapid',
+                    'stale', 'response-v6', 'agent-1k-a', 'rapid',
                     ?, ?, '[]', 0, 'running'
                 )
                 """,
@@ -132,8 +132,8 @@ def test_writer_retention_backup_and_reset(tmp_path: Path) -> None:
         finally:
             await close_database(database, writer)
         with pytest.raises(ValueError, match="exactly"):
-            database.reset_v4("wrong")
-        database.reset_v4("response-suite-v5")
+            database.reset_v5("wrong")
+        database.reset_v5("response-suite-v6")
         assert not database.path.exists()
 
     asyncio.run(scenario())
@@ -213,11 +213,94 @@ def _make_minimal_v3(path: Path, deployment_id: str) -> None:
             """,
             (isoformat(),),
         )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _make_minimal_v4(path: Path, deployment_id: str) -> None:
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            PRAGMA user_version=4;
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+            CREATE TABLE deployments (
+                deployment_id TEXT PRIMARY KEY
+            );
+            CREATE TABLE probe_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                deployment_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                scheduled_at TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                error_class TEXT NOT NULL,
+                error_code TEXT,
+                profile_id TEXT,
+                definition_version TEXT NOT NULL,
+                suite_version TEXT,
+                vantage_id TEXT,
+                collection_mode TEXT,
+                fixture_id TEXT,
+                block_id TEXT,
+                scheduler_lag_seconds REAL,
+                confirmation_of INTEGER,
+                context_tier TEXT,
+                measurement_json TEXT NOT NULL
+            );
+            CREATE TABLE collection_epochs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                schema_version INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                collection_mode TEXT NOT NULL,
+                suite_version TEXT NOT NULL
+            );
+            CREATE TABLE budget_ledger (
+                deployment_id TEXT NOT NULL,
+                budget_date TEXT NOT NULL,
+                requests_reserved INTEGER NOT NULL DEFAULT 0,
+                requests_settled INTEGER NOT NULL DEFAULT 0,
+                input_tokens_reserved INTEGER NOT NULL DEFAULT 0,
+                input_tokens_settled INTEGER NOT NULL DEFAULT 0,
+                output_tokens_reserved INTEGER NOT NULL DEFAULT 0,
+                output_tokens_settled INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(deployment_id, budget_date)
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO deployments(deployment_id) VALUES (?)", (deployment_id,)
+        )
         connection.execute(
             """
-            INSERT INTO budget_usage(deployment_id, budget_date,
-                                     short_requests, context_requests, output_tokens)
-            VALUES (?, ?, 2, 1, 500)
+            INSERT INTO probe_runs(
+                deployment_id, kind, scheduled_at, started_at, finished_at,
+                outcome, error_class, profile_id, definition_version,
+                vantage_id, measurement_json
+            ) VALUES (?, 'experience', ?, ?, ?, 'success', 'none',
+                      'response-v5', '5', 'old-vantage', '{}')
+            """,
+            (deployment_id, isoformat(), isoformat(), isoformat()),
+        )
+        connection.execute(
+            """
+            INSERT INTO collection_epochs(schema_version, started_at, reason,
+                                          collection_mode, suite_version)
+            VALUES (4, ?, 'old', 'standard', 'response-suite-v5')
+            """,
+            (isoformat(),),
+        )
+        connection.execute(
+            """
+            INSERT INTO budget_ledger(deployment_id, budget_date,
+                                      requests_settled)
+            VALUES (?, ?, 5)
             """,
             (deployment_id, datetime.now(UTC).date().isoformat()),
         )
@@ -226,18 +309,22 @@ def _make_minimal_v3(path: Path, deployment_id: str) -> None:
         connection.close()
 
 
-def test_v3_to_v4_migration_preserves_history_and_adds_ledger(
+def test_v3_to_v5_migration_preserves_history_and_adds_context_tier(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
         storage = storage_at(tmp_path)
         database = Database(storage)
         database.prepare_directories()
-        deployment_id = "legacy-deployment"
+        deployment_id = "legacy-v3-deployment"
         _make_minimal_v3(database.path, deployment_id)
-        await database.migrate(collection_mode="rapid")
-        assert await database.scalar("PRAGMA user_version") == 4
+        await database.migrate(collection_mode="standard")
+        assert await database.scalar("PRAGMA user_version") == 5
         assert await database.scalar("SELECT COUNT(*) FROM probe_runs") == 1
+        columns = {
+            row["name"] for row in await database.query("PRAGMA table_info(probe_runs)")
+        }
+        assert "context_tier" in columns
         tables = {
             row["name"]
             for row in await database.query(
@@ -245,7 +332,51 @@ def test_v3_to_v4_migration_preserves_history_and_adds_ledger(
             )
         }
         assert "budget_usage" not in tables
-        assert "budget_ledger" in tables
+        assert "budget_ledger" not in tables
+        assert {
+            "probe_measurements",
+            "current_states",
+            "state_history",
+            "events",
+            "scheduler_state",
+            "collection_blocks",
+            "experience_profiles",
+            "config_snapshots",
+        } <= tables
+        assert list(database.backup_dir.glob("observatory-*.sqlite3"))
+
+    asyncio.run(scenario())
+
+
+def test_v4_to_v5_migration_drops_budget_ledger(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        storage = storage_at(tmp_path)
+        database = Database(storage)
+        database.prepare_directories()
+        deployment_id = "legacy-deployment"
+        _make_minimal_v4(database.path, deployment_id)
+        await database.migrate(collection_mode="rapid")
+        assert await database.scalar("PRAGMA user_version") == 5
+        assert await database.scalar("SELECT COUNT(*) FROM probe_runs") == 1
+        tables = {
+            row["name"]
+            for row in await database.query(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert "budget_ledger" not in tables
+        assert {
+            "probe_measurements",
+            "current_states",
+            "state_history",
+            "events",
+            "scheduler_state",
+            "collection_blocks",
+            "experience_profiles",
+            "config_snapshots",
+        } <= tables
         assert list(database.backup_dir.glob("observatory-*.sqlite3"))
 
     asyncio.run(scenario())

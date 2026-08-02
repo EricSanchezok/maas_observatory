@@ -178,7 +178,7 @@ def _seed_api_database(tmp_path: Path) -> tuple[object, object, object, object]:
     return asyncio.run(scenario())
 
 
-def test_api_v6_schema_tier_structure_etag_and_endpoints(
+def test_api_v7_schema_tier_structure_etag_and_endpoints(
     tmp_path: Path,
 ) -> None:
     settings, catalog, database, _ = _seed_api_database(tmp_path)
@@ -195,7 +195,7 @@ def test_api_v6_schema_tier_structure_etag_and_endpoints(
         response = client.get("/api/v1/experience/overview")
         assert response.status_code == 200
         body = response.json()
-        assert body["schema_version"] == "6"
+        assert body["schema_version"] == "7"
         assert body["freshness_seconds"] is not None
         item = next(
             row for row in body["data"] if row["deployment_id"] == deployment_id
@@ -203,9 +203,9 @@ def test_api_v6_schema_tier_structure_etag_and_endpoints(
         # Deployment-level fields
         assert item["alias"] is not None
         assert item["name"] is not None
-        assert item["profile_id"] == "response-v5"
-        assert item["definition_version"] == "5"
-        assert item["suite_version"] == "response-suite-v5"
+        assert item["profile_id"] == "response-v6"
+        assert item["definition_version"] == "6"
+        assert item["suite_version"] == "response-suite-v6"
         assert item["collection_mode"] == "rapid"
         assert item["uptime_24h"] is None  # no route probes seeded
         assert item["uptime_7d"] is None
@@ -253,9 +253,8 @@ def test_api_v6_schema_tier_structure_etag_and_endpoints(
         assert catalog_response.status_code == 200
         assert catalog_response.headers["etag"] != etag
 
-        # -- compare --
         compare_data = client.get("/api/v1/compare").json()
-        assert compare_data["schema_version"] == "6"
+        assert compare_data["schema_version"] == "7"
         measured = next(
             row for row in compare_data["data"] if row["deployment_id"] == deployment_id
         )
@@ -271,7 +270,7 @@ def test_api_v6_schema_tier_structure_etag_and_endpoints(
             # 1k tier: two probes, complete fixture set
             assert t["fixture_count"] == 2
             assert t["complete_fixture_set"] is True
-        assert measured["suite_version"] == "response-suite-v5"
+        assert measured["suite_version"] == "response-suite-v6"
 
         # -- experience/series --
         series_resp = client.get(
@@ -358,7 +357,7 @@ def test_api_latest_empty_db_returns_warmup_tiers(
             assert t["latest_attempt_reason"] == "first_check_scheduled"
 
 
-def test_meta_is_v6_and_secret_safe(tmp_path: Path) -> None:
+def test_meta_is_v7_and_secret_safe(tmp_path: Path) -> None:
     async def seed() -> tuple[object, object, object]:
         settings = make_settings(tmp_path)
         catalog = configured_catalog()
@@ -380,12 +379,11 @@ def test_meta_is_v6_and_secret_safe(tmp_path: Path) -> None:
     )
     with TestClient(app) as client:
         meta = client.get("/api/v1/meta").json()
-        assert meta["schema_version"] == "6"
-        assert meta["data"]["api_schema_version"] == "6"
-        assert meta["data"]["config_schema_version"] == 4
-        assert meta["data"]["database_schema_version"] == 4
-        assert meta["data"]["suite_version"] == "response-suite-v5"
-        assert meta["data"]["definition_version"] == "5"
+        assert meta["schema_version"] == "7"
+        assert meta["data"]["api_schema_version"] == "7"
+        assert meta["data"]["config_schema_version"] == 5
+        assert meta["data"]["database_schema_version"] == 5
+        assert meta["data"]["definition_version"] == "6"
         assert meta["data"]["context_tiers"] == [
             {"tier": "1k", "target_tokens": 1000, "fixture_count": 2},
             {"tier": "16k", "target_tokens": 16000, "fixture_count": 2},
@@ -402,13 +400,14 @@ def test_meta_is_v6_and_secret_safe(tmp_path: Path) -> None:
         ]
         assert meta["data"]["schedule"]["rapid_context_tier"] == "1k"
         assert "rapid_automatic_limit" not in meta["data"]["schedule"]
-        assert meta["data"]["budget"] == {
-            "scope": "per deployment per UTC day",
-            "applies_to": ["rapid", "standard"],
-            "requests": 3,
-            "input_tokens": 100_000,
-            "output_tokens": 24,
-        }
+        assert meta["data"]["deployment_limits"] is not None
+        assert isinstance(meta["data"]["deployment_limits"], list)
+        assert len(meta["data"]["deployment_limits"]) > 0
+        assert "output_limit" in meta["data"]["deployment_limits"][0]
+        assert (
+            meta["data"]["request_shape"]["max_tokens"] == "per-deployment-output-limit"
+        )
+        assert "budget" not in meta["data"]
         # Secret safety
         import json
 
@@ -569,6 +568,7 @@ def test_prompt_deviation_preserves_measurements_in_tier_stats(
                 "ref_prompt_tokens": 1000,
                 "reported_completion_tokens": 8,
                 "prompt_token_deviation_pct": 0.0,
+                "configured_output_tokens": catalog.deployments[0].output_limit,
                 "prompt_token_quality": "reported",
             },
         )
@@ -589,6 +589,7 @@ def test_prompt_deviation_preserves_measurements_in_tier_stats(
                 "reported_completion_tokens": 8,
                 "prompt_token_deviation_pct": 20.0,
                 "prompt_token_quality": "reference_mismatch",
+                "configured_output_tokens": catalog.deployments[0].output_limit,
             },
         )
         await close_database(database, writer)
@@ -636,3 +637,7 @@ def test_prompt_deviation_preserves_measurements_in_tier_stats(
         assert latest_point["reason"] is None
         assert latest_point["prompt_token_quality"] == "reference_mismatch"
         assert latest_point["measurements"]["prompt_token_deviation_pct"] == 20.0
+        assert (
+            latest_point["measurements"]["configured_output_tokens"]
+            == catalog.deployments[0].output_limit
+        )

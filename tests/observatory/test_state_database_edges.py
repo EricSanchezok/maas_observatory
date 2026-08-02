@@ -28,8 +28,8 @@ def test_database_version_guards_missing_check_and_writer_recovery(
     async def scenario() -> None:
         missing = Database(storage_at(tmp_path / "missing"))
         assert await missing.quick_check() == (False, "database_missing")
-        # v1 is unsupported, v5 is newer than current (v4)
-        for version in (1, 5):
+        # v1 is unsupported, v6 is newer than current (v5)
+        for version in (1, 6):
             database = Database(storage_at(tmp_path / str(version)))
             database.prepare_directories()
             connection = sqlite3.connect(database.path)
@@ -219,7 +219,7 @@ def test_legacy_experience_kinds_do_not_affect_v5_state(tmp_path: Path) -> None:
                         block_id, scheduler_lag_seconds, context_tier,
                         measurement_json
                     ) VALUES (?, 'experience_context', ?, ?, ?, 'success', 'none',
-                              'response-v5', '5', 'response-suite-v5',
+                              'response-v6', '6', 'response-suite-v6',
                               'test-vantage', 'rapid', 'agent-1k-a',
                               'legacy-block', 0, '1k', ?)
                     """,

@@ -40,10 +40,10 @@ requests to port 8080.
 Collection defaults to `standard`. Set
 `MAAS_OBSERVATORY_COLLECTION_MODE=rapid` only for an attended session; Rapid
 requires `MAAS_OBSERVATORY_RAPID_CONTEXT_TIER` (one of `1k`, `16k`, or `64k`)
-and shares the same per-deployment daily budget as Standard. Switch back to
+uses each deployment's output limit from the model catalog. Switch back to
 Standard manually after the session. See the
 [operations guide](docs/maas-observatory-operations.md) for the exact request
-schedule, measurement formulas, schema v4 migration, and public API v6.
+schedule, measurement formulas, schema v5 migration, and public API v7.
 
 ## Scope
 

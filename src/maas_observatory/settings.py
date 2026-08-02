@@ -33,36 +33,29 @@ class StorageSettings(StrictModel):
         return self.root if self.root.is_absolute() else project_root / self.root
 
 
-class DailyBudget(StrictModel):
-    requests: int = Field(default=240, ge=0)
-    input_tokens: int = Field(default=5_000_000, ge=0)
-    output_tokens: int = Field(default=3_932_160, ge=0)
-
-
 class ProbeSettings(StrictModel):
     route_interval_seconds: int = Field(default=60, ge=10)
     confirmation_delay_seconds: int = Field(default=60, ge=10)
     response_start_timeout_seconds: int = Field(default=180, ge=10)
     stream_stall_seconds: int = Field(default=30, ge=1)
     canary_max_output_tokens: int = Field(default=8, ge=1)
-    experience_max_output_tokens: int = Field(default=16384, ge=2)
+
     rapid_block_interval_seconds: int = Field(default=60, ge=10)
     rapid_context_tier: Literal["1k", "16k", "64k"] | None = None
     standard_block_interval_seconds: int = Field(default=600, ge=60)
-    daily_budget: DailyBudget = Field(default_factory=DailyBudget)
 
 
 class ExperienceSettings(StrictModel):
     vantage_id: str = Field(default="observatory-primary", min_length=1)
-    suite_version: str = "response-suite-v5"
-    response_profile_id: str = "response-v5"
-    definition_version: str = "5"
+    suite_version: str = "response-suite-v6"
+    response_profile_id: str = "response-v6"
+    definition_version: str = "6"
     summary_min_samples: int = Field(default=6, ge=6)
     baseline_min_samples: int = Field(default=20, ge=3)
 
 
 class ObservatorySettings(StrictModel):
-    schema_version: Literal[4]
+    schema_version: Literal[5]
     server: ServerSettings = Field(default_factory=ServerSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     probes: ProbeSettings = Field(default_factory=ProbeSettings)

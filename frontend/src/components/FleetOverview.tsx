@@ -251,11 +251,6 @@ export function FleetOverview({
                           Latest attempt failed
                         </div>
                       )}
-                      {t.prompt_token_quality === "reference_mismatch" && (
-                        <div className="fleet-tier-quality" role="status">
-                          Tokenizer differs from reference
-                        </div>
-                      )}
                     </div>
                   );
                 })}

@@ -23,7 +23,7 @@ def configured_catalog() -> ModelCatalog:
 def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings:
     return ObservatorySettings.model_validate(
         {
-            "schema_version": 4,
+            "schema_version": 5,
             "collection_mode": mode,
             "server": {"host": "127.0.0.1", "port": 8080},
             "storage": {
@@ -40,15 +40,9 @@ def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings
                 "response_start_timeout_seconds": 10,
                 "stream_stall_seconds": 2,
                 "canary_max_output_tokens": 8,
-                "experience_max_output_tokens": 8,
                 "rapid_block_interval_seconds": 10,
                 "rapid_context_tier": "1k" if mode == "rapid" else None,
                 "standard_block_interval_seconds": 60,
-                "daily_budget": {
-                    "requests": 3,
-                    "input_tokens": 100_000,
-                    "output_tokens": 24,
-                },
             },
             "profiles": {
                 deployment.alias: (
@@ -60,9 +54,9 @@ def make_settings(tmp_path: Path, *, mode: str = "rapid") -> ObservatorySettings
             },
             "experience": {
                 "vantage_id": "test-vantage",
-                "suite_version": "response-suite-v5",
-                "response_profile_id": "response-v5",
-                "definition_version": "5",
+                "suite_version": "response-suite-v6",
+                "response_profile_id": "response-v6",
+                "definition_version": "6",
                 "summary_min_samples": 6,
                 "baseline_min_samples": 20,
             },
@@ -81,7 +75,7 @@ async def open_database(
     writer = asyncio.create_task(database.writer_loop())
     await database.wait_writer()
     await database.synchronize_catalog(catalog)
-    for definition in profile_definitions(settings.experience, settings.probes):
+    for definition in profile_definitions(settings.experience):
         serialized = json.dumps(definition, sort_keys=True)
         await database.write(
             """
@@ -114,7 +108,7 @@ async def insert_probe(
     outcome: str = "success",
     error_class: str = "none",
     error_code: str | None = None,
-    profile_id: str = "response-v5",
+    profile_id: str = "response-v6",
     fixture_id: str = "agent-1k-a",
     collection_mode: str = "rapid",
     finished_at: str | None = None,
@@ -131,7 +125,7 @@ async def insert_probe(
             definition_version, suite_version, vantage_id,
             collection_mode, fixture_id, block_id, scheduler_lag_seconds,
             confirmation_of, context_tier, measurement_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '5', 'response-suite-v5',
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '6', 'response-suite-v6',
                   'test-vantage', ?, ?, 'test-block', 0, ?, ?, ?)
         """,
         (

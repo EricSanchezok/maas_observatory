@@ -229,14 +229,14 @@ def db_reset(
 
     settings = load_observability_settings(config)
     database = Database(settings.storage)
-    database.reset_v4(confirm)
+    database.reset_v5(confirm)
     asyncio.run(
         database.migrate(
             collection_mode=settings.collection_mode,
             suite_version=settings.experience.suite_version,
         )
     )
-    typer.echo("database reset complete; response-suite-v5 epoch started")
+    typer.echo("database reset complete; response-suite-v6 epoch started")
 
 
 @app.command("export")

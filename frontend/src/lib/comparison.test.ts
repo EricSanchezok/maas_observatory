@@ -47,10 +47,10 @@ function mkItem(id: string, tiers: Record<ContextTier, TierCompareData>): Compar
     tiers,
     source_kind: "streaming_request",
     observation_scope: "observatory_vantage",
-    profile_id: "response-v5",
+    profile_id: "response-v6",
     response_state: "current",
-    definition_version: "5",
-    suite_version: "response-suite-v5",
+    definition_version: "6",
+    suite_version: "response-suite-v6",
     vantage_id: "observatory-primary",
     collection_mode: "rapid"
   };

@@ -1,4 +1,4 @@
-"""Public, read-only FastAPI contract for real-request measurements (v6)."""
+"""Public, read-only FastAPI contract for real-request measurements (v7)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ WINDOW_SECONDS = {
     "7d": 604800,
     "30d": 2592000,
 }
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 ALL_TIERS = ("1k", "16k", "64k")
 
 
@@ -88,8 +88,6 @@ def _attempt_reason(
         return None
     if error_code == "maintenance":
         return "maintenance"
-    if error_code and error_code.startswith("daily_"):
-        return "scheduled_later"
     if error_class == "measurement_error":
         return "measurement_limited"
     if outcome == "skipped":
@@ -367,7 +365,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(
         title="MaaS Observatory API",
-        version="6.0.0",
+        version="7.0.0",
         docs_url="/docs",
         redoc_url=None,
     )
@@ -713,6 +711,7 @@ def create_app(
                                 "stream_gap_max_seconds",
                                 "reported_prompt_tokens",
                                 "reported_completion_tokens",
+                                "configured_output_tokens",
                                 "reasoning_chars",
                                 "reported_reasoning_tokens",
                                 "reasoning_tokens_estimated",
@@ -995,8 +994,8 @@ def create_app(
             data={
                 "api_schema_version": SCHEMA_VERSION,
                 "service": "MaaS Observatory",
-                "config_schema_version": 4,
-                "database_schema_version": 4,
+                "config_schema_version": 5,
+                "database_schema_version": 5,
                 "collection_mode": settings.collection_mode,
                 "response_profile_id": settings.experience.response_profile_id,
                 "suite_version": settings.experience.suite_version,
@@ -1032,16 +1031,17 @@ def create_app(
                     ],
                 },
                 "request_shape": {
-                    "max_tokens": settings.probes.experience_max_output_tokens,
+                    "max_tokens": "per-deployment-output-limit",
                     "proxy_environment": "ignored",
                 },
-                "budget": {
-                    "scope": "per deployment per UTC day",
-                    "applies_to": ["rapid", "standard"],
-                    "requests": settings.probes.daily_budget.requests,
-                    "input_tokens": settings.probes.daily_budget.input_tokens,
-                    "output_tokens": settings.probes.daily_budget.output_tokens,
-                },
+                "deployment_limits": [
+                    {
+                        "deployment_id": deployment.deployment_id,
+                        "alias": deployment.alias,
+                        "output_limit": deployment.output_limit,
+                    }
+                    for deployment in catalog.deployments
+                ],
                 "metric_definitions": {
                     "first_token_seconds": (
                         "request start to first streamed token "

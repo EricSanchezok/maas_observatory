@@ -133,9 +133,7 @@ def test_route_configuration_protocol_and_transport_failures(
     asyncio.run(scenario())
 
 
-def test_generation_skip_paths_and_daily_budget_reservation(
-    tmp_path: Path,
-) -> None:
+def test_generation_skip_paths_without_budget_gate(tmp_path: Path) -> None:
     async def scenario() -> None:
         settings = make_settings(tmp_path, mode="standard")
         catalog = configured_catalog()
@@ -153,14 +151,14 @@ def test_generation_skip_paths_and_daily_budget_reservation(
                 """,
                 (deployment.deployment_id, datetime.now(UTC).isoformat()),
             )
-            from maas_observatory.probes import fixture_prompt as fp
+            from maas_observatory.probes import fixture_prompt
 
-            fid, payload_data = fp("agent-1k-a", "test")
+            fixture_id, prompt_data = fixture_prompt("agent-1k-a", "test")
             skipped = await runner.generation(
                 deployment,
                 ProbeKind.EXPERIENCE,
-                fixture_id=fid,
-                prompt_data=payload_data,
+                fixture_id=fixture_id,
+                prompt_data=prompt_data,
             )
             assert (skipped.outcome, skipped.error_code) == (
                 ProbeOutcome.SKIPPED,
@@ -178,72 +176,11 @@ def test_generation_skip_paths_and_daily_budget_reservation(
             skipped = await no_profile.generation(
                 deployment,
                 ProbeKind.EXPERIENCE,
-                fixture_id=fid,
-                prompt_data=payload_data,
+                fixture_id=fixture_id,
+                prompt_data=prompt_data,
             )
             assert skipped.error_code == "profile_undefined"
             assert skipped.error_class == "measurement_error"
-
-            today = datetime.now(UTC).date().isoformat()
-            await database.write(
-                """
-                INSERT INTO budget_ledger(
-                    deployment_id, budget_date, requests_settled
-                ) VALUES (?, ?, 3)
-                """,
-                (deployment.deployment_id, today),
-            )
-            context_allowed, context_reason = await runner._budget_available(
-                deployment, 1300, 8
-            )
-            assert (context_allowed, context_reason) == (
-                False,
-                "daily_response_budget",
-            )
-            await database.write(
-                """
-                DELETE FROM budget_ledger WHERE deployment_id=? AND budget_date=?
-                """,
-                (deployment.deployment_id, today),
-            )
-            await database.write(
-                """
-                INSERT INTO budget_ledger(
-                    deployment_id, budget_date, output_tokens_reserved
-                ) VALUES (?, ?, 24)
-                """,
-                (deployment.deployment_id, today),
-            )
-            token_allowed, token_reason = await runner._budget_available(
-                deployment, 1300, 8
-            )
-            assert (token_allowed, token_reason) == (
-                False,
-                "daily_output_token_budget",
-            )
-
-            # Test settle
-            await database.write(
-                """
-                DELETE FROM budget_ledger WHERE deployment_id=? AND budget_date=?
-                """,
-                (deployment.deployment_id, today),
-            )
-            await runner._reserve_budget(deployment, 1300, 8)
-            await runner._settle_budget(deployment, 1300, 8, 1400, 10)
-            row = (
-                await database.query(
-                    "SELECT * FROM budget_ledger "
-                    "WHERE deployment_id=? AND budget_date=?",
-                    (deployment.deployment_id, today),
-                )
-            )[0]
-            assert row["requests_reserved"] == 0
-            assert row["requests_settled"] == 1
-            assert row["input_tokens_reserved"] == 0
-            assert row["input_tokens_settled"] == 1400
-            assert row["output_tokens_reserved"] == 0
-            assert row["output_tokens_settled"] == 10
         finally:
             await close_database(database, writer)
 

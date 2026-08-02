@@ -31,9 +31,9 @@ MAAS_OBSERVATORY_COLLECTION_MODE=rapid
 ```
 
 Rapid mode requires an explicit context tier via
-`MAAS_OBSERVATORY_RAPID_CONTEXT_TIER` and shares the same per-deployment daily
-budget as Standard. Switch it back to Standard manually after the session. The
-active mode appears in the startup log, API metadata, and interface.
+`MAAS_OBSERVATORY_RAPID_CONTEXT_TIER`. Both modes use each deployment's output
+limit from the model catalog. Switch Rapid back to Standard manually after the
+session. The active mode appears in the startup log, API metadata, and interface.
 
 The service listens on `0.0.0.0:8080`. `/healthz` reports that the HTTP process
 is alive. `/readyz` returns 200 only after migration, SQLite `quick_check`,
@@ -75,11 +75,11 @@ completed response still counts as a successful path check. Characters and SSE
 chunks are never used as token estimates.
 
 Reported prompt-token counts are compared with the fixed fixture reference to
-describe measurement comparability. A difference above 15% is shown as a
-tokenizer mismatch, not a service failure, and the successful response remains
-part of latency and throughput summaries.
+describe measurement comparability. A difference above 15% is retained as API
+diagnostic metadata, not a service failure or main-interface warning, and the
+successful response remains part of latency and throughput summaries.
 
-`response-suite-v5` contains six deterministic Agent fixtures at three context
+`response-suite-v6` contains six deterministic Agent fixtures at three context
 tiers (1K, 16K, 64K) with two variants each, in one balanced response profile.
 The repository stores fixture definitions and payload digests, but the database,
 logs, API, and exports do not retain prompt or response content. A sampling
@@ -87,11 +87,11 @@ block uses the same fixture and nonce for all nine deployments. The deployment
 order rotates and reverses deterministically to avoid a fixed first/last
 position.
 
-All six fixtures allow up to 16,384 completion tokens. This ceiling gives
-steady-state speed measurements enough output events to reduce short-stream
-variance across all tiers. Responses may stop naturally before the ceiling.
-Changing this limit requires a new suite and definition version so results
-collected under different request shapes are never combined.
+Each request uses the selected deployment's catalog `output_limit` as its
+maximum completion allowance. Responses may stop naturally before that limit.
+The actual configured value is stored with every measurement. Changes to this
+request policy require a new suite and definition version so incompatible
+results are never combined.
 
 Observer HTTP clients explicitly ignore workstation proxy environment and
 system settings. Requests follow the host routing table directly, which keeps
@@ -116,10 +116,10 @@ covering all six fixtures.
 All generation checks share one process-wide lock. There is never more than one
 active inference request.
 
-| Mode | Schedule | Limit |
+| Mode | Schedule | Output allowance |
 |---|---|---|
-| `rapid` | one request per model per minute; single-tier A/B variants alternate | daily request, input-token, and output-token limits |
-| `standard` | one balanced six-fixture block every 10 minutes; strict equal-frequency order across all three tiers | daily request, input-token, and output-token limits |
+| `rapid` | one request per model per minute; single-tier A/B variants alternate | deployment `output_limit` |
+| `standard` | one balanced six-fixture block every 10 minutes; strict equal-frequency order across all three tiers | deployment `output_limit` |
 
 Nine calls are spread across each block. If a request or block runs long, the
 next block is delayed. The scheduler records lag and does not launch concurrent
@@ -153,13 +153,11 @@ SQLite uses WAL, foreign keys, a five-second busy timeout,
 `synchronous=NORMAL`, incremental auto-vacuum, and one asynchronous writer.
 Run one Uvicorn worker and one application replica per database.
 
-Schema v4 retains response probes with context-tier awareness, profile
-definitions, scheduler position, events, per-deployment daily budget ledgers,
-and valid response history. When migrating from schema v3, the service creates
-an online backup before adding the context-tier column and replacing the budget
-table. Schema v2 first creates a backup then drops all scrape, counter,
-histogram, rollup, metrics-source, and telemetry-state data. Schema v1 requires
-a full reset.
+Schema v5 retains response probes with context-tier awareness, profile
+definitions, scheduler position, events, and valid response history. It removes
+the obsolete budget ledger. Migrations from schema v3 and v4 create an online
+backup first; the v3 path also adds the context-tier column. Schemas v1 and v2
+require a full reset.
 
 Useful commands:
 
@@ -181,7 +179,7 @@ uv run maas-observatory probe run \
 
 # Destructive rebuild: stop the service and back up first
 uv run maas-observatory db backup
-uv run maas-observatory db reset --confirm response-suite-v5
+uv run maas-observatory db reset --confirm response-suite-v6
 uv run maas-observatory db check
 ```
 
@@ -206,7 +204,7 @@ GET|HEAD /api/v1/meta
 
 The removed passive endpoints `/api/v1/overview` and
 `/api/v1/deployments/{id}/series` return 404. API envelopes use schema version
-6, ETags, and:
+7, ETags, and:
 
 ```text
 Cache-Control: public, max-age=10, stale-while-revalidate=30

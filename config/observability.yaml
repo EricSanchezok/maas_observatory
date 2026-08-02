@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 collection_mode: standard
 
 server:
@@ -20,14 +20,10 @@ probes:
   response_start_timeout_seconds: 180
   stream_stall_seconds: 30
   canary_max_output_tokens: 8
-  experience_max_output_tokens: 16384
+
   rapid_block_interval_seconds: 60
   rapid_context_tier: null
   standard_block_interval_seconds: 600
-  daily_budget:
-    requests: 240
-    input_tokens: 5000000
-    output_tokens: 3932160
 
 profiles:
   deepseek-v4-pro: no-thinking
@@ -42,8 +38,8 @@ profiles:
 
 experience:
   vantage_id: observatory-primary
-  suite_version: response-suite-v5
-  response_profile_id: response-v5
-  definition_version: "5"
+  suite_version: response-suite-v6
+  response_profile_id: response-v6
+  definition_version: "6"
   summary_min_samples: 6
   baseline_min_samples: 20

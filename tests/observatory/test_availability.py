@@ -125,7 +125,7 @@ def test_availability_sliding_window_with_maintenance_exclusion(
                 response = client.get("/api/v1/availability?days=30")
                 assert response.status_code == 200
                 body = response.json()
-                assert body["schema_version"] == "6"
+                assert body["schema_version"] == "7"
                 assert body["data_window"] == "30d"
                 entry = next(
                     row for row in body["data"] if row["deployment_id"] == deployment_id
