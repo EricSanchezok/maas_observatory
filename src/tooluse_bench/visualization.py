@@ -324,7 +324,7 @@ def _render_bfcl_matrix(
         )
 
     color_map = LinearSegmentedColormap.from_list(
-        "sii_tooluse_blue",
+        "tooluse_blue",
         ("#F4F7FB", "#C8DCFA", "#6EA6F0", BLUE_DARK),
     ).with_extremes(
         bad=EMPTY,

@@ -6,7 +6,7 @@ product
 
 ## Users
 
-People who use the academy's hosted models and need to understand how quickly and reliably each deployment responds from the MaaS Observatory server.
+People who use self-hosted model deployments and need to understand how quickly and reliably each responds from the MaaS Observatory server.
 
 ## Product Purpose
 

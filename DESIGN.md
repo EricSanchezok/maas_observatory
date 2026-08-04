@@ -1,6 +1,6 @@
 ---
 name: MaaS Observatory
-description: Clear response measurements for academy-hosted models.
+description: Clear response measurements for self-hosted model deployments.
 colors:
   background: "#0a0d10"
   surface: "#0f1317"

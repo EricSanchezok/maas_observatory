@@ -246,7 +246,7 @@ class ProbeAdapter(BenchmarkAdapter):
     def metadata(self) -> BenchmarkMetadata:
         return BenchmarkMetadata(
             benchmark_id="probe",
-            display_name="SII Native Tool-calling Protocol Probe",
+            display_name="Native Tool-calling Protocol Probe",
             version="1.1.0",
             source_url="https://github.com/maas-observatory/tool-use",
             revision="probe-v1.1",
