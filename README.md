@@ -70,7 +70,7 @@ composite score is calculated.
 ## Evaluated deployments
 
 The public catalog contains deployment metadata for DeepSeek V4 Pro/Flash,
-GLM 5.2, Qwen3.6-27B, Kimi K2.6, MiniMax M2.7, MiMo V2.5 Pro, and Nex N2 Pro
+GLM 5.2, Qwen3.8-27B, Kimi K2.6, MiniMax M2.7, MiMo V2.5 Pro, and Nex N2 Pro
 W8A8/BF16. Private URLs and keys exist only in environment variables.
 
 ```bash

@@ -43,9 +43,9 @@ deployments:
     name: DeepSeek V4 Flash (W8A8)
     provider: MaaS
     family: deepseek-v4
-    upstream_model: DeepSeek-V4-Flash
+    upstream_model: DeepSeek-V4-Flash-0731
     upstream_source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro
-    model_id: ds-v4-flash
+    model_id: dsv4-flash-0731
     precision: W8A8
     context_limit: 1000000
     output_limit: 384000
@@ -98,21 +98,21 @@ deployments:
           chat_template_kwargs:
             enable_thinking: false
 
-  - deployment_id: maas-qwen3-6-27b-bf16
-    alias: qwen3.6-27b
-    name: Qwen 3.6 27B (BF16)
+  - deployment_id: maas-qwen3-8-27b-bf16
+    alias: qwen3.8-27b
+    name: Qwen 3.8 27B (BF16)
     provider: MaaS
     family: qwen
-    upstream_model: Qwen3.6-27B
-    upstream_source: https://huggingface.co/Qwen/Qwen3.6-27B
-    model_id: Qwen3.6-27B
+    upstream_model: Qwen3.8-27B
+    upstream_source: https://huggingface.co/Qwen/Qwen3.8-27B
+    model_id: Qwen3.8-27B
     precision: BF16
     context_limit: 1000000
     output_limit: 65536
     input_modalities: [text, image]
     endpoint:
-      base_url_env: SII_HOLOS_QWEN3_6_27B_BASE_URL
-      api_key_env: SII_HOLOS_QWEN3_6_27B_API_KEY
+      base_url_env: SII_HOLOS_QWEN3_8_27B_BASE_URL
+      api_key_env: SII_HOLOS_QWEN3_8_27B_API_KEY
     capabilities:
       reasoning: true
       temperature: true
